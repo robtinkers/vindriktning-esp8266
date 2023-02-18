@@ -1,45 +1,76 @@
 """
-by robtinkers, based on https://github.com/kfricke/micropython-usyslog/blob/master/usyslog.py
+A partial implementation of CPython's syslog wrapper and SysLogHandler APIs, for micropython.
 
-This syslog client can send UDP packets to a remote syslog server.
+Timestamps and unicode are not supported, but there are a few handy extensions.
 
-The API is based on CPython's LogHandler/SysLogHandler with a bit of CPython's syslog library
+Remember it's not a bug if it's documented, it's a feature!
 
-Timestamps are not supported for simplicity.
+References:
+    https://www.rfc-editor.org/rfc/rfc5424
+    https://docs.python.org/3/library/syslog.html
+    https://docs.python.org/3/library/logging.html
+    https://docs.python.org/3/library/logging.handlers.html#sysloghandler
+    https://en.wikipedia.org/wiki/MIT_License
 
-For more information, see RFC 3164.
+Copyright (c) 2022 "robtinkers"
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 """
+# heap size increased by 3632 bytes on Pi Pico / 3776 bytes on ESP8266, as reported by
+# import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.SyslogClient() ; gc.collect() ; gc.mem_alloc()
+# in comparison, kfricke's usyslog adds 2576 bytes / 2768 bytes
+
+from micropython import const
 import usocket
 
-# Facility constants
-LOG_KERN = const(0)
-LOG_USER = const(1)
-LOG_MAIL = const(2)
-LOG_DAEMON = const(3)
-LOG_AUTH = const(4)
-LOG_SYSLOG = const(5)
-LOG_LPR = const(6)
-LOG_NEWS = const(7)
-LOG_UUCP = const(8)
-LOG_CRON = const(9)
-LOG_AUTHPRIV = const(10)
-LOG_FTP = const(11)
-# Facilities 12-15 are in the RFC (but not generally in syslog.h)
-LOG_NTP = const(12)
-LOG_AUDIT = const(13)
-LOG_CONSOLE = const(14) # NOTE: not LOG_ALERT because that is used for a priority
-LOG_CLOCK = const(15)
+#### syslog facility constants
+# Most of these don't apply to microcontrollers, so we save a little memory by commenting them out.
+# Pre-shifting is unconventional, but simpler to use and also how the CPython syslog wrapper does it.
 
-LOG_LOCAL0 = const(16)
-LOG_LOCAL1 = const(17)
-LOG_LOCAL2 = const(18)
-LOG_LOCAL3 = const(19)
-LOG_LOCAL4 = const(20)
-LOG_LOCAL5 = const(21)
-LOG_LOCAL6 = const(22)
-LOG_LOCAL7 = const(23)
+#LOG_KERN = const(0 << 3)
+LOG_USER = const(1 << 3)
+#LOG_MAIL = const(2 << 3)
+#LOG_DAEMON = const(3 << 3)
+#LOG_AUTH = const(4 << 3)
+#LOG_SYSLOG = const(5 << 3)
+#LOG_LPR = const(6 << 3)
+#LOG_NEWS = const(7 << 3)
+#LOG_UUCP = const(8 << 3)
+#LOG_CRON = const(9 << 3)
+#LOG_AUTHPRIV = const(10 << 3)
+#LOG_FTP = const(11 << 3)
+## facilities 12-15 are in the RFC (but not generally in syslog.h)
+#LOG_NTP = const(12 << 3)
+#LOG_AUDIT = const(13 << 3)
+LOG_CONSOLE = const(14 << 3) # EXTENSION: always print to the console and never send over the network
+#LOG_CLOCK = const(15 << 3)
+LOG_LOCAL0 = const(16 << 3)
+LOG_LOCAL1 = const(17 << 3)
+LOG_LOCAL2 = const(18 << 3)
+LOG_LOCAL3 = const(19 << 3)
+LOG_LOCAL4 = const(20 << 3)
+LOG_LOCAL5 = const(21 << 3)
+LOG_LOCAL6 = const(22 << 3)
+LOG_LOCAL7 = const(23 << 3)
 
-# Priority constants
+#### syslog priority constants
+
 LOG_EMERG = const(0)
 LOG_ALERT = const(1)
 LOG_CRIT = const(2)
@@ -49,124 +80,156 @@ LOG_NOTICE = const(5)
 LOG_INFO = const(6)
 LOG_DEBUG = const(7)
 
-# Priority constants for compatibility with Python SysLogHandler
-CRITICAL = const(50)
-ERROR = const(40)
-WARNING = const(30)
-INFO = const(20)
-DEBUG = const(10)
-NOTSET = const(0)
-# Also for compatibility with Python SysLogHandler
+#### option constants (combine with bitwise or)
+
+LOG_PERROR = const(0x20) # "log to stderr as well" [i.e. to the console by default]
+LOG_CONS = const(0x02) # "log on the console if errors in sending" [you probably want this]
+
+#### more constants
+
+# useful, also part of the SysLogHandler API
 SYSLOG_UDP_PORT = const(514)
 
-DEFAULT_SYSLOG_FACILITY = const(LOG_USER)
-DEFAULT_SYSLOG_IDENT = const('') # which becomes '-' on the wire
+#### helper functions
 
-DEFAULT_LEVEL = const(NOTSET)
+# useful to know which device sent what in multi-device environments
+# without having to configure everything with fixed IP addresses
+# typical usage: log=syslog.SyslogClient(...); log.openlog(..., log.machine_id())
+# TODO: move into a seperate module for generic helper functions
+#def machine_id():
+#    import machine
+#    hexlify = '' # no need to import ubinascii
+#    for b in machine.unique_id(): # documented as always returning a byte string
+#        hexlify = hexlify + '%02x' % b
+#    return hexlify
 
-LOGHANDLER_LEVEL_TO_SYSLOG_PRIORITY = {
-    DEBUG: LOG_DEBUG,
-    INFO: LOG_INFO,
-    WARNING: LOG_WARNING,
-    ERROR: LOG_ERR,
-    CRITICAL: LOG_CRIT
-}
+# internal use only, enforces parts of the RFC5424 grammar
+# it isn't perfect (doesn't filter <32 >126 or unicode)
+# but such data should be considered an app bug anyway
+def _printusascii(s, n):
+    if s is None or s == '':
+        return '-'
+    return s.replace(' ','_')[0:n]
 
-SYSLOG_PRIORITY_TEXT = (
-    # order is very important because a tuple rather than a dict
-    'EMERGENCY',
-    'ALERT',
-    'CRITICAL',
-    'ERROR',
-    'WARNING',
-    'NOTICE',
-    'INFO',
-    'DEBUG',
-)
+################
 
-class uSysLog:
-    def __init__(self, address=None, facility=DEFAULT_SYSLOG_FACILITY, socktype=usocket.SOCK_DGRAM, ident=DEFAULT_SYSLOG_IDENT):
-        if address is None:
-            self._addr = None
-            self._sock = None
-        else:
-            assert socktype == usocket.SOCK_DGRAM
-            self._addr = usocket.getaddrinfo(address[0], address[1])[0][4]
-            self._sock = usocket.socket(usocket.ALOG_INET, socktype)
-        self.openlog(ident=ident, logoption=0, facility=facility)
-        self.setHostnameFromHardware()
-        self.setLevel(DEFAULT_LEVEL)
+class SyslogClient:
 
-    def setHostname(self, hostname):
-        self._hostname = hostname
+    def __init__(self, address=None, facility=None, socktype=usocket.SOCK_DGRAM):
+#        assert socktype == usocket.SOCK_DGRAM
+        self._address = address
+        self._sock = None
+        self._info = None
+        self._stderr = None
+        self.openlog(None, None, facility, None)
 
-    def setHostnameFromHardware(self):
-        from sys import platform
-        from machine import unique_id
-        from ubinascii import hexlify
-        self.setHostname(platform.lower() + '-' + hexlify(unique_id()).decode())
+    # EXTENSION: redirect "stderr" so that LOG_PERROR logs to a file instead of the console
+    # (actually, anything with a write method will work)
+    def perror(self, fh):
+        self._stderr = fh
 
-    # https://docs.python.org/3/library/syslog.html
-
-    def openlog(self, ident=None, logoption=None, facility=None): # logoption is not actually used
-        if ident is not None:
-            self._ident = ident
-        if facility is not None:
-            self._facility = facility
+    #### Implement (most of) the syslog wrapper API ...
 
     def closelog(self):
-        self._ident = DEFAULT_SYSLOG_IDENT
-        self._facility = DEFAULT_SYSLOG_FACILITY
+        try: self._sock.close()
+        except: pass
+        self._sock = None
+        self._info = None
+        self.openlog()
 
-    def syslog(self, fac_and_pri, msg):
-        pri = (fac_and_pri & 0x07)
-        if self._facility == LOG_CONSOLE:
-            print('%s: %s' % (SYSLOG_PRIORITY_TEXT[pri], msg))
-        else:
-            if pri <= LOG_ALERT: # i.e. LOG_ALERT or LOG_EMERG
-                print('%s: %s' % (SYSLOG_PRIORITY_TEXT[pri], msg))
-            if pri == fac_and_pri:
-                fac_and_pri |= self._facility << 3
-            #<{PRIVAL}>{VERSION} {TIMESTAMP} {HOSTNAME} {APP-NAME} {PROCID} {MSGID} {STRUCTURED-DATA} {BOM}{UTF-8-MSG}
-            data = "<%d>1 - %s %s - - - %s%s" % (
-                        fac_and_pri,
-                        self._hostname if self._hostname is not '' else '-',
-                        self._ident if self._ident is not '' else '-',
-#                        '\xEF\xBB\xBF', msg.encode('utf-8') # TODO: correct utf-8 version? does this even work in micropython?
-                        '', msg # yolo version
-                    )
-            self._sock.sendto(data.encode(), self._addr)
+    # EXTENSION: hostname can be set by caller
+    def openlog(self, ident=None, logoption=None, facility=None, hostname=None):
+        self._ident = _printusascii(ident, 48)
+        self._option = 0 if logoption is None else int(logoption)
+        self._facility = LOG_USER if facility is None else int(facility)
+        self._hostname = _printusascii(hostname, 255)
 
-    # https://docs.python.org/3/library/logging.html
-    # https://docs.python.org/3/library/logging.handlers.html
+    # added at the start of lines printed on the console (or written to a file if using perror redirection)
+    # if you want to change this, then monkey patch or sub-class (leading underscore because interface may change)
+    _priorityprefixes = (
+            # order is extremely important because a tuple, not a dict
+            '[emergency] ',	# [0]
+            '[alert] ',		# [1]
+            '[critical] ',	# [2]
+            '[error] ',		# [3]
+            '[warning] ',	# [4]
+            '[notice] ',	# [5]
+            '[info] ',		# [6]
+            '[debug] ',		# [7]
+        )
 
-    def setLevel(self, level):
-        self._level = level
+    # FEATURE: pri is optional in CPython, but required here
+    def syslog(self, pri, msg):
+        facility = (pri & ~0x07)
+        priority = (pri &  0x07)
+        if facility == 0:
+            facility = self._facility
+
+        if facility == LOG_CONSOLE or priority <= LOG_ALERT or (self._option & LOG_PERROR and self._stderr is None):
+            print(self._priorityprefixes[priority] + msg)
+
+        if self._option & LOG_PERROR and self._stderr is not None:
+            self._stderr.write(self._priorityprefixes[priority] + msg + "\n") # caller must handle any exceptions
+
+        if facility == LOG_CONSOLE or self._address is None:
+            return
+
+        if self._info is None:
+            try:
+                # EXTENSION: tuple not required, can just use a string and assume the port number
+                if isinstance(self._address, str) or isinstance(self._address, bytes):
+                    self._info = usocket.getaddrinfo(self._address, SYSLOG_UDP_PORT)[0][-1]
+                else:
+                    self._info = usocket.getaddrinfo(self._address[0], self._address[1])[0][-1]
+            except Exception as e:
+                if self._option & LOG_CONS:
+                    print("%s: Exception %s:%s in getaddrinfo(%s)" % (self._priorityprefixes[LOG_CRIT], type(e).__name__, e.args, repr(self._address)))
+                return
+
+        if self._sock is None:
+            try:
+                self._sock = usocket.socket(usocket.ALOG_INET, usocket.SOCK_DGRAM)
+            except Exception as e:
+                if self._option & LOG_CONS:
+                    print("%s: Exception %s:%s in socket(ALOG_INET,SOCK_DGRAM)" % (self._priorityprefixes[LOG_CRIT], type(e).__name__, e.args))
+                return
+
+        # FEATURE: no timestamps or unicode
+        data = ("<%d>1 - %s %s - - - %s" % (facility|priority, self._hostname, self._ident, msg)).encode()
+
+        try:
+            self._sock.sendto(data, self._info)
+        except Exception as e:
+            if self._option & LOG_CONS:
+                print("%s: Exception %s:%s in sendto()" % (self._priorityprefixes[LOG_CRIT], type(e).__name__, e.args))
+            # throw away the socket and get a new one next time
+            try: self._sock.close()
+            except: pass
+            self._sock = None
+
+    #### Implement (part of) the SysLogHander API ...
 
     def close(self):
-        if self._sock is not None:
-            self._sock.close()
-            self._sock = None
-        self._level = DEFAULT_LEVEL # TODO: is this correct?
-
-    def log(self, level, msg):
-        if level < self._level:
-            return
-        try: priority = LOGHANDLER_LEVEL_TO_SYSLOG_PRIORITY[level]
-        except IndexError: priority = LOGHANDLER_LEVEL_TO_SYSLOG_PRIORITY[WARNING]
-        self.syslog(priority, msg)
+        self.closelog()
 
     def critical(self, msg):
-        self.log(CRITICAL, msg)
+        self.syslog(LOG_CRIT, msg)
 
     def error(self, msg):
-        self.log(ERROR, msg)
+        self.syslog(LOG_ERR, msg)
 
     def warning(self, msg):
-        self.log(WARNING, msg)
+        self.syslog(LOG_WARNING, msg)
+
+    # EXTENSION: not in the SysLogHandler API (because NOTICE is not a default LogHandler level)
+    def notice(self, msg):
+        self.syslog(LOG_NOTICE, msg)
 
     def info(self, msg):
-        self.log(INFO, msg)
+        self.syslog(LOG_INFO, msg)
 
     def debug(self, msg):
-        self.log(DEBUG, msg)
+        self.syslog(LOG_DEBUG, msg)
+
+    # FEATURE: LOG_ALERT and LOG_EMERG don't get convenience functions as they have an extra side-effect
+    # (this library will automatically print such events on the console)
