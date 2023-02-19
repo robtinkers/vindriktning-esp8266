@@ -32,9 +32,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-# heap size increased by 3632 bytes on Pi Pico / 3776 bytes on ESP8266, as reported by
+# heap size increased by 3456 bytes on a Pi Pico, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.SyslogClient() ; gc.collect() ; gc.mem_alloc()
-# in comparison, kfricke's usyslog adds 2576 bytes / 2768 bytes
+# in comparison, kfricke's usyslog adds 2576 bytes
 
 from micropython import const
 import usocket
@@ -90,27 +90,6 @@ LOG_CONS = const(0x02) # "log on the console if errors in sending" [you probably
 # useful, also part of the SysLogHandler API
 SYSLOG_UDP_PORT = const(514)
 
-#### helper functions
-
-# useful to know which device sent what in multi-device environments
-# without having to configure everything with fixed IP addresses
-# typical usage: log=syslog.SyslogClient(...); log.openlog(..., log.machine_id())
-# TODO: move into a seperate module for generic helper functions
-#def machine_id():
-#    import machine
-#    hexlify = '' # no need to import ubinascii
-#    for b in machine.unique_id(): # documented as always returning a byte string
-#        hexlify = hexlify + '%02x' % b
-#    return hexlify
-
-# internal use only, enforces parts of the RFC5424 grammar
-# it isn't perfect (doesn't filter <32 >126 or unicode)
-# but such data should be considered an app bug anyway
-def _printusascii(s, n):
-    if s is None or s == '':
-        return '-'
-    return s.replace(' ','_')[0:n]
-
 ################
 
 class SyslogClient:
@@ -139,10 +118,10 @@ class SyslogClient:
 
     # EXTENSION: hostname can be set by caller
     def openlog(self, ident=None, logoption=None, facility=None, hostname=None):
-        self._ident = _printusascii(ident, 48)
+        self._ident = '-' if (ident is None or ident == '') else str(ident).replace(' ','_') # EXTENSION: that .replace()
         self._option = 0 if logoption is None else int(logoption)
         self._facility = LOG_USER if facility is None else int(facility)
-        self._hostname = _printusascii(hostname, 255)
+        self._hostname = '-' if (hostname is None or hostname == '') else str(hostname)
 
     # added at the start of lines printed on the console (or written to a file if using perror redirection)
     # if you want to change this, then monkey patch or sub-class (leading underscore because interface may change)
@@ -181,17 +160,17 @@ class SyslogClient:
                     self._info = usocket.getaddrinfo(self._address, SYSLOG_UDP_PORT)[0][-1]
                 else:
                     self._info = usocket.getaddrinfo(self._address[0], self._address[1])[0][-1]
-            except Exception as e:
+            except:
                 if self._option & LOG_CONS:
-                    print("%s: Exception %s:%s in getaddrinfo(%s)" % (self._priorityprefixes[LOG_CRIT], type(e).__name__, e.args, repr(self._address)))
+                    print(self._priorityprefixes[LOG_CRIT] + "Exception in getaddrinfo()")
                 return
 
         if self._sock is None:
             try:
                 self._sock = usocket.socket(usocket.ALOG_INET, usocket.SOCK_DGRAM)
-            except Exception as e:
+            except:
                 if self._option & LOG_CONS:
-                    print("%s: Exception %s:%s in socket(ALOG_INET,SOCK_DGRAM)" % (self._priorityprefixes[LOG_CRIT], type(e).__name__, e.args))
+                    print(self._priorityprefixes[LOG_CRIT] + "Exception in socket()")
                 return
 
         # FEATURE: no timestamps or unicode
@@ -199,9 +178,9 @@ class SyslogClient:
 
         try:
             self._sock.sendto(data, self._info)
-        except Exception as e:
+        except:
             if self._option & LOG_CONS:
-                print("%s: Exception %s:%s in sendto()" % (self._priorityprefixes[LOG_CRIT], type(e).__name__, e.args))
+                print(self._priorityprefixes[LOG_CRIT] + "Exception in sendto()")
             # throw away the socket and get a new one next time
             try: self._sock.close()
             except: pass
