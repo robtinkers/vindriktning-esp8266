@@ -21,36 +21,6 @@ mqtt = MQTTClient(config.mqtt_client_id, config.mqtt_server,
                   user=config.mqtt_username, password=config.mqtt_password,
                   ssl=False) # FIXME: test with SSL, add config option (also port number)
 
-try:
-    offline_publishing = True
-    with open('/offline.dat','r') as offline_dat:
-        offline_seq = int(offline_dat.readline())
-    offline_seq = (offline_seq+1) % 10
-    for offline_h in range(0,24):
-        offline_fn = '/off_%01d_%02d.log' % (offline_seq, offline_h)
-        try:
-            os.remove(offline_fn)
-        except OSError: # file not found
-            pass
-except ValueError: # file empty (or corrupt)
-    offline_publishing = True
-    for offline_fn in os.listdir('/'):
-        if offline_fn[:4] == 'off_' and offline_fn[-4:] == '.log':
-            os.remove(offline_fn)
-    offline_seq = 0
-except OSError: # file not found
-    offline_publishing = False
-
-if offline_publishing:
-    with open('/offline.dat','w') as offline_dat:
-        offline_dat.write(str(offline_seq))
-    t = time.gmtime() # we don't do timezones
-    offline_h = t[3]
-    offline_fn = '/off_%01d_%02d.log' % (offline_seq, offline_h)
-    offline_log = open(offline_fn, 'w')
-    del t
-
-
 ##
 ##
 ##
@@ -124,18 +94,6 @@ while True:
                 try: mqtt.disconnect()
                 except: pass
                 mqtt.sock = None
-
-    if not wlan.isconnected() and offline_publishing:
-        try:
-            t = time.gmtime()
-            if offline_h != t[3]:
-                offline_h = t[3]
-                offline_fn = '/off_%01d_%02d.log' % (offline_seq, offline_h)
-                offline_log = open(offline_fn, 'w')
-            offline_log.write('%02d:%02d:%02d\tPMVT\t%.2f\n' % (t[3], t[4], t[5], pmvt))
-            del t
-        except:
-            logger.critical('Exception %s:%s while publishing to file' % (type(e).__name__, e.args))
 
     # LEDs
 
