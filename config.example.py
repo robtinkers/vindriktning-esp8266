@@ -12,7 +12,7 @@ wifi_password       = 'My-Pass'
 syslog_address      = None
 
 mqtt_client_id      = machine_id
-mqtt_server         = 'mqtt.example.com'
+mqtt_broker         = 'mqtt.example.com'
 mqtt_username       = 'mqtt_username'
 mqtt_password       = 'mqtt_password'
 

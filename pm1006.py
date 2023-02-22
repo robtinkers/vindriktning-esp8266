@@ -24,7 +24,7 @@ class _PrintLogHandler:
     def critical(self, msg):
         print(msg)
 
-class PM1006_Sensor:
+class PM1006:
     _uart = None
     _adjust_add = None
     _adjust_mul = None
