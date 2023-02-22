@@ -37,16 +37,16 @@ logger = usyslog.SyslogClient(config.syslog_address)
 logger.openlog('vindriktning', usyslog.LOG_PERROR|usyslog.LOG_CONS, usyslog.LOG_DAEMON, config.machine_id)
 logger.info('Started')
 
+# Set up the PM1006 sensor
+pm1006 = PM1006(config.pm1006_rxpin)
+pm1006.set_logger(logger)
+pm1006.set_adjust(config.pm1006_adjust_add, config.pm1006_adjust_mul)
+pm1006.set_smooth(config.pm1006_smooth_exp)
+
 # Set up UMQTT
 mqtt = MQTTClient(config.mqtt_client_id, config.mqtt_broker,
                   user=config.mqtt_username, password=config.mqtt_password,
                   ssl=False) # FIXME: test with SSL, add config option (also port number)
-
-# Set up the PM1006 sensor
-pm1006 = PM1006(config.pm1006_rxpin, logger=logger,
-                add=config.pm1006_adjust_add,
-                mul=config.pm1006_adjust_mul,
-                smoothing=config.pm1006_smoothing)
 
 ##
 ## MAIN LOOP

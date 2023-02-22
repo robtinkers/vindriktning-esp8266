@@ -25,10 +25,9 @@ class _PrintLogHandler:
         print(msg)
 
 class PM1006:
-    _uart = None
     _adjust_add = None
     _adjust_mul = None
-    _smoothing = None
+    _smooth_exp = None
     
     adjusted_ringbuf = []
     adjusted_ringidx = None
@@ -36,16 +35,7 @@ class PM1006:
     last_smoothed = None
 
     def __init__(self, rxpin, **kwargs):
-        # handle 'logger' first so we can log startup
-        logger = kwargs.get('logger', None)
-        if logger is None:
-            logger = False
-        if logger is False:
-            self._logger = _PassLogHandler()
-        elif logger is True:
-            self._logger = _PrintLogHandler()
-        else:
-            self._logger = logger
+        self.set_logger(None)
 
         # tx is required but not used, doesn't even need to be connected
         # timeout must be over 2 seconds to capture a full Vindriktning cycle with one read()
@@ -53,9 +43,20 @@ class PM1006:
         # this variable must start with double underscore because of a Thonny bug
         self._uart = SoftUART(baudrate=9600, rx=Pin(rxpin), tx=Pin(0), timeout=3000)
 
-        self._adjust_add = kwargs.get('add', None)
-        self._adjust_mul = kwargs.get('mul', None)
-        self._smoothing = kwargs.get('smoothing', None)
+    def set_logger(self, logger):
+        if logger is None or logger is False:
+            self._logger = _PassLogHandler()
+        elif logger is True:
+            self._logger = _PrintLogHandler()
+        else:
+            self._logger = logger
+
+    def set_adjust(self, add, mul):
+        self._adjust_add = add
+        self._adjust_mul = mul
+
+    def set_smooth(self, smooth):
+        self._smooth_exp = smooth
 
     def read_uart(self, **kwargs):
         self._logger.debug('Waiting for UART')
@@ -179,8 +180,8 @@ class PM1006:
             self.last_adjusted = pm1006
 
         # 5.
-        if self.last_smoothed is not None and self._smoothing is not None:
-            pm1006 = (self.last_smoothed * self._smoothing) + (pm1006 * (1 - self._smoothing))
+        if self.last_smoothed is not None and self._smooth_exp is not None:
+            pm1006 = (self.last_smoothed * self._smooth_exp) + (pm1006 * (1 - self._smooth_exp))
         self.last_smoothed = pm1006
 
         return pm1006
