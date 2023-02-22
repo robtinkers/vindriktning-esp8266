@@ -1,6 +1,6 @@
 from machine import Pin, SoftUART
 
-class PassLogHandler:
+class _PassLogHandler:
     def debug(self, msg):
         pass
     def info(self, msg):
@@ -12,7 +12,7 @@ class PassLogHandler:
     def critical(self, msg):
         pass
 
-class PrintLogHandler:
+class _PrintLogHandler:
     def debug(self, msg):
         print(msg)
     def info(self, msg):
@@ -33,10 +33,15 @@ class PM1006_Sensor:
     last_smoothed = None
 
     def __init__(self, rxpin, **kwargs):
-        if 'logger' in kwargs:
-            self.logger = kwargs.get('logger')
+        logger = kwargs.get('logger', None)
+        if logger is None:
+            logger = False
+        if logger is False:
+            self.logger = _PassLogHandler()
+        elif logger is True:
+            self.logger = _PrintLogHandler()
         else:
-            self.logger = PassLogHandler()
+            self.logger = logger
         # tx is required but not used, doesn't even need to be connected
         # timeout must be over 2 seconds to capture a full Vindriktning cycle with one read()
         # but the smaller the timeout the better to maximise time left for non-UART stuff

@@ -6,8 +6,8 @@ import gc # for memory usage
 import usyslog
 from pm1006 import PM1006_Sensor
 
-logger = usyslog.SyslogClient(None)
-logger.openlog('vindriktning', usyslog.LOG_CONS, usyslog.LOG_CONSOLE, config.machine_id)
+logger = usyslog.SyslogClient(config.syslog_address)
+logger.openlog('vindriktning', usyslog.LOG_PERROR|usyslog.LOG_CONS, usyslog.LOG_DAEMON, config.machine_id)
 
 pm1006 = PM1006_Sensor(config.pm1006_rxpin, logger=logger)
 
@@ -131,6 +131,10 @@ while True:
             del t
         except:
             logger.critical('Exception %s:%s while publishing to file' % (type(e).__name__, e.args))
+
+    # memory
+
+    logger.debug('gc.mem_free() = %d' % (gc.mem_free(),))
 
     # LEDs
 

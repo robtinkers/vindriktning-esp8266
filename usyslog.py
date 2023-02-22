@@ -46,7 +46,7 @@ import usocket
 #LOG_KERN = const(0 << 3)
 LOG_USER = const(1 << 3)
 #LOG_MAIL = const(2 << 3)
-#LOG_DAEMON = const(3 << 3)
+LOG_DAEMON = const(3 << 3)
 #LOG_AUTH = const(4 << 3)
 #LOG_SYSLOG = const(5 << 3)
 #LOG_LPR = const(6 << 3)
@@ -118,7 +118,7 @@ class SyslogClient:
 
     # EXTENSION: hostname can be set by caller
     def openlog(self, ident=None, logoption=None, facility=None, hostname=None):
-        self._ident = '-' if (ident is None or ident == '') else str(ident).replace(' ','_') # EXTENSION: that .replace()
+        self._ident = '-' if (ident is None or ident == '') else (str(ident)+':').replace(' ','_') # EXTENSION: that .replace()
         self._option = 0 if logoption is None else int(logoption)
         self._facility = LOG_USER if facility is None else int(facility)
         self._hostname = '-' if (hostname is None or hostname == '') else str(hostname)
@@ -167,8 +167,8 @@ class SyslogClient:
 
         if self._sock is None:
             try:
-                self._sock = usocket.socket(usocket.ALOG_INET, usocket.SOCK_DGRAM)
-            except:
+                self._sock = usocket.socket(usocket.AF_INET, usocket.SOCK_DGRAM)
+            except Exception as e:
                 if self._option & LOG_CONS:
                     print(self._priorityprefixes[LOG_CRIT] + "Exception in socket()")
                 return
