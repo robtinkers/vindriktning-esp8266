@@ -5,8 +5,7 @@ import os # for offline logging
 import usyslog
 from pm1006 import PM1006
 
-
-
+# Extend the basic UMQTT client with a couple of helpers to keep our own code cleaner
 class MQTTClient(simple.MQTTClient):
 
     def isconnected(self):
@@ -16,8 +15,7 @@ class MQTTClient(simple.MQTTClient):
         super().disconnect()
         self.sock = None
 
-
-
+# Helper routine to keep our own code cleaner. NOTE: no timeout, may hang indefinitely
 def wlan_connect():
     while True:
         wlan.active(True)
@@ -26,30 +24,32 @@ def wlan_connect():
             time.sleep(1)
             if wlan.isconnected()
                 time.sleep(5)
-                return
+                return True
 
-
-
+# Connect to the network asap so that remote logging works
 network.WLAN(network.AP_IF).active(False)
 wlan = network.WLAN(network.STA_IF)
 try: wlan_connect()
-except: pass
+except: pass # we don't have a working logger yet, but any errors will be reported in the main loop
 
+# Set up remote logging
 logger = usyslog.SyslogClient(config.syslog_address)
 logger.openlog('vindriktning', usyslog.LOG_PERROR|usyslog.LOG_CONS, usyslog.LOG_DAEMON, config.machine_id)
 logger.info('Started')
 
-pm1006 = PM1006(config.pm1006_rxpin, logger=logger,
-                      add=config.pm1006_adjust_add,
-                      mul=config.pm1006_adjust_mul,
-                      smoothing=config.pm1006_smoothing)
-
+# Set up UMQTT
 mqtt = MQTTClient(config.mqtt_client_id, config.mqtt_broker,
                   user=config.mqtt_username, password=config.mqtt_password,
                   ssl=False) # FIXME: test with SSL, add config option (also port number)
 
+# Set up the PM1006 sensor
+pm1006 = PM1006(config.pm1006_rxpin, logger=logger,
+                add=config.pm1006_adjust_add,
+                mul=config.pm1006_adjust_mul,
+                smoothing=config.pm1006_smoothing)
+
 ##
-##
+## MAIN LOOP
 ##
 
 mqtt_last_success = time.time()
