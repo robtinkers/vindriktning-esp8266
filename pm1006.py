@@ -49,24 +49,24 @@ class PM1006_Sensor:
         self.uart = SoftUART(baudrate=9600, rx=Pin(rxpin), tx=Pin(0), timeout=3000)
 
     def read_uart(self, **kwargs):
-        verbose = kwargs.get('verbose', False)
-
         self.logger.debug('Waiting for UART')
-        while True:
+        noreadcounter = 0
+        while True: # TODO: timer argument to break out of this
             try:
-                if verbose:
-                    print('.', end='')
                 data = self.uart.read()
             except Exception as e:
-                if verbose:
-                    print()
                 self.logger.critical('Exception %s:%s while reading UART' % (type(e).__name__, e.args))
                 return None
-            if data is None:
+            if data is None or len(data) < 20:
+                noreadcounter += 1
+                if noreadcounter == 10:
+                    self.logger.warning('uart.read() failed %d times' % (noreadcounter,))
+                elif noreadcounter == 20:
+                    self.logger.error('uart.read() failed %d times' % (noreadcounter,))
+                elif noreadcounter >= 30 and (noreadcounter % 10) == 0:
+                    self.logger.critical('uart.read() failed %d times' % (noreadcounter,))
                 continue
             break
-        if verbose:
-            print()
         self.logger.debug('Read from UART (%d bytes)' % (len(data),))
 
         readings = []
@@ -93,7 +93,7 @@ class PM1006_Sensor:
 
     def read(self, smoothing=None, add=None, mul=None):
 
-        readings = self.read_uart(verbose=True)
+        readings = self.read_uart()
 
         if readings is None:
             # we already logged something
