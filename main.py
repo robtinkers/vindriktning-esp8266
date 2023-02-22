@@ -2,14 +2,17 @@ import config
 from umqtt.simple import MQTTClient # TODO: investigate umqtt.robust
 import network, sys, time
 import os # for offline logging
-import gc # for memory usage
 import usyslog
 from pm1006 import PM1006_Sensor
 
 logger = usyslog.SyslogClient(config.syslog_address)
 logger.openlog('vindriktning', usyslog.LOG_PERROR|usyslog.LOG_CONS, usyslog.LOG_DAEMON, config.machine_id)
+logger.info('Started')
 
-pm1006 = PM1006_Sensor(config.pm1006_rxpin, logger=logger)
+pm1006 = PM1006_Sensor(config.pm1006_rxpin, logger=logger,
+                       add=config.pm1006_adjust_add,
+                       mul=config.pm1006_adjust_mul,
+                       smoothing=config.pm1006_smoothing)
 
 network.WLAN(network.AP_IF).active(False)
 wlan = network.WLAN(network.STA_IF)
@@ -56,7 +59,7 @@ while True:
 
     ## READ PMVT
 
-    pmvt = pm1006.read(config.pm1006_smoothing, config.pm1006_adjust_add, config.pm1006_adjust_mul)
+    pmvt = pm1006.read()
     logger.info('PMVT = %s' % (repr(pmvt),))
 
     ## CONNECT
@@ -109,16 +112,18 @@ while True:
                 mqtt.publish(config.mqtt_topic_pmvt, '%.2f' % (pmvt,), retain=True)
             except Exception as e:
                 logger.critical('Exception %s:%s while publishing to %s' % (type(e).__name__, e.args, repr(config.mqtt_topic_pmvt)))
-                try: mqtt.disconnect() ; mqtt.sock = None
+                try: mqtt.disconnect()
                 except: pass
+                mqtt.sock = None
         else:
             try:
                 logger.info('Pinging broker')
                 mqtt.ping()
             except Exception as e:
                 logger.critical('Exception %s:%s while pinging broker' % (type(e).__name__, e.args))
-                try: mqtt.disconnect() ; mqtt.sock = None
+                try: mqtt.disconnect()
                 except: pass
+                mqtt.sock = None
 
     if not wlan.isconnected() and offline_publishing:
         try:
@@ -131,10 +136,6 @@ while True:
             del t
         except:
             logger.critical('Exception %s:%s while publishing to file' % (type(e).__name__, e.args))
-
-    # memory
-
-    logger.debug('gc.mem_free() = %d' % (gc.mem_free(),))
 
     # LEDs
 
