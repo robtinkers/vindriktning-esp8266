@@ -201,8 +201,8 @@ class PM1006:
         if adjusted is None or oldvalue is None:
             return adjusted
 
-        if self._how_broken is not None:
-            return adjusted
+#        if self._how_broken is not None:
+#            return adjusted
 
         return min(oldvalue, adjusted)
 
