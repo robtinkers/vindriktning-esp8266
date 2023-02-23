@@ -162,30 +162,34 @@ class PM1006:
     _adjidx = None
 
     def read_adjusted(self):
-        one = self.read_one()
-        if one is None:
-            # we already logged something
-            return None
+        adjusted = self.read_one()
 
-        adjusted = one
-        if self._adjust_mul is not None:
-            adjusted *= self._adjust_mul
-        if self._adjust_add is not None:
-            adjusted += self._adjust_add
-        if adjusted < 0:
-            adjusted = 0.0
+        if adjusted is not None:
 
-        # keep a ring buffer of the latest 120 values (adjusted but not filtered/smoothed)
-        # this is ~60 minutes worth, assuming no read errors
-        # TODO: is the read error rate high enough that it's worth tracking timestamps?
-        if len(self._adjbuf) < 120:
-            self._adjbuf.append(adjusted)
-        else:
-            if self._adjidx is None:
-                self._adjidx = 0
+            if self._adjust_mul is not None:
+                adjusted *= self._adjust_mul
+            if self._adjust_add is not None:
+                adjusted += self._adjust_add
+            if adjusted < 0:
+                adjusted = 0.0
+
+            # keep a ring buffer of the latest 120 values (adjusted but not filtered/smoothed)
+
+            if len(self._adjbuf) < 120:
+                self._adjbuf.append(adjusted)
             else:
+                if self._adjidx is None:
+                    self._adjidx = 0
+                else:
+                    self._adjidx = (self._adjidx+1) % 120
+                self._adjbuf[self._adjidx] = adjusted
+
+        else: # there were read errors, so substitute in the last known-good value
+
+            if self._adjidx is not None:
+                oldval = self._adj[self._adjidx]
                 self._adjidx = (self._adjidx+1) % 120
-            self._adjbuf[self._adjidx] = adjusted
+                self._adjbuf[self._adjidx] = adjusted
 
         return adjusted
 
