@@ -23,7 +23,7 @@ def wlan_connect():
         for i in range(0, 5):
             time.sleep(1)
             if wlan.isconnected()
-                time.sleep(5)
+                time.sleep(5) # TODO: check this is still required
                 return True
 
 # Connect to the network asap so that remote logging works
@@ -95,10 +95,10 @@ while True:
     else:
         logger.debug('Already connected to broker')
 
+    ## PUBLISH
+
     if not wlan.isconnected() or not mqtt.isconnected():
         continue
-
-    ## PUBLISH
 
     if config.mqtt_topic_pmvt is not None:
 

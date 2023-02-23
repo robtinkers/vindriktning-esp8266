@@ -54,6 +54,19 @@ class PM1006:
         self._smoothing = smoothing
 
 
+    # read_raw() returns an array of values
+    #
+    # read_one() converts that array into one value (e.g. median)
+    #
+    # read_adjusted() scales that one value linearly (configured by caller, default is no-op)
+    #
+    # read_filtered() does some filter on the adjusted value (e.g. local minimum)
+    #
+    # read_smoothed() does exponential smoothing on the filtered value (configured by caller, default is no-op)
+    #
+    # Note that read_adjusted() also keeps a ring buffer of the latest values
+    # This will be used in a traffic light system at some point in the future
+
 
     def read_raw(self):
         self._logger.debug('Waiting for UART')
@@ -96,19 +109,6 @@ class PM1006:
 
         return raw
 
-
-    # read_raw() returns an array of values
-    #
-    # read_one() converts that array into one value (e.g. median)
-    #
-    # read_adjusted() scales that one value linearly (typically a no-op)
-    #
-    # read_filtered() does some filter on the adjusted value (e.g. local minimum)
-    #
-    # read_smoothed() does exponential smoothing on the filtered value
-    #
-    # Note that read_adjusted also keeps a ring buffer of the latest values
-    # This will be used in a traffic light system at some point in the future
 
 
     def read_one(self):

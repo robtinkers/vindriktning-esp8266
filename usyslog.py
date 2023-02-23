@@ -32,7 +32,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-# heap size increased by 3488 bytes on a Pi Pico, as reported by
+# heap size increased by 3504 bytes on a Pi Pico, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.SyslogClient() ; gc.collect() ; gc.mem_alloc()
 # in comparison, kfricke's usyslog adds 2576 bytes
 
@@ -137,6 +137,24 @@ class SyslogClient:
             '[debug] ',		# [7]
         )
 
+    logmask = 0
+## save a little memory by not implementing this API call
+#    def setlogmask(self, mask): # note that the mask configures what is *ignored*
+#        omask = self.logmask
+#        if mask != 0: # this is the standard api
+#            self.conmask = mask
+#        return omask
+
+
+    # EXTENSION: automatically send some priorities to console
+    conmask = ~(LOG_EMERG|LOG_ALERT)
+## save a little memory by not implementing this API call
+#    def setconmask(self, mask):
+#        omask = self.conmask
+#        if mask != 0:
+#            self.conmask = mask
+#        return omask
+
     # FEATURE: pri is optional in CPython, but required here
     def syslog(self, pri, msg):
         facility = (pri & ~0x07)
@@ -144,7 +162,10 @@ class SyslogClient:
         if facility == 0:
             facility = self._facility
 
-        if facility == LOG_CONSOLE or priority <= LOG_ALERT or (self._option & LOG_PERROR and self._stderr is None):
+        if priority & self.logmask:
+            return
+
+        if facility == LOG_CONSOLE or (priority & self.conmask == 0) or (self._option & LOG_PERROR and self._stderr is None):
             print(self._priorityprefixes[priority] + msg)
 
         if self._option & LOG_PERROR and self._stderr is not None:
