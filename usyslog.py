@@ -32,7 +32,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-# heap size increased by 3504 bytes on a Pi Pico, as reported by
+# heap size increased by 3520 bytes on a Pi Pico, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.SyslogClient() ; gc.collect() ; gc.mem_alloc()
 # in comparison, kfricke's usyslog adds 2576 bytes
 
@@ -94,7 +94,8 @@ SYSLOG_UDP_PORT = const(514)
 
 class SyslogClient:
 
-    def __init__(self, address=None, facility=None, socktype=usocket.SOCK_DGRAM):
+    # FEATURE: constructor doesn't take a socktype argument, and we only support UDP network traffic
+    def __init__(self, address=None, facility=None): # , socktype=usocket.SOCK_DGRAM):
 #        assert socktype == usocket.SOCK_DGRAM
         self._address = address
         self._sock = None
@@ -137,18 +138,17 @@ class SyslogClient:
             '[debug] ',		# [7]
         )
 
-    logmask = 0
-## save a little memory by not implementing this API call
-#    def setlogmask(self, mask): # note that the mask configures what is *ignored*
+    logmask = 0 # note that the mask configures what is *ignored*
+## save a little memory by not implementing this API call, access the value directly if needed
+#    def setlogmask(self, mask):
 #        omask = self.logmask
-#        if mask != 0: # this is the standard api
-#            self.conmask = mask
+#        if mask != 0: # as per the C api
+#            self.logmask = mask
 #        return omask
-
 
     # EXTENSION: automatically send some priorities to console
     conmask = ~(LOG_EMERG|LOG_ALERT)
-## save a little memory by not implementing this API call
+## save a little memory by not implementing this API call, access the value directly if needed
 #    def setconmask(self, mask):
 #        omask = self.conmask
 #        if mask != 0:
@@ -183,7 +183,7 @@ class SyslogClient:
                     self._info = usocket.getaddrinfo(self._address[0], self._address[1])[0][-1]
             except:
                 if self._option & LOG_CONS:
-                    print(self._priorityprefixes[LOG_CRIT] + "Exception in getaddrinfo()")
+                    print(self._priorityprefixes[LOG_CRIT] + "syslog: Exception in getaddrinfo()")
                 return
 
         if self._sock is None:
@@ -191,7 +191,7 @@ class SyslogClient:
                 self._sock = usocket.socket(usocket.AF_INET, usocket.SOCK_DGRAM)
             except Exception as e:
                 if self._option & LOG_CONS:
-                    print(self._priorityprefixes[LOG_CRIT] + "Exception in socket()")
+                    print(self._priorityprefixes[LOG_CRIT] + "syslog: Exception in socket()")
                 return
 
         # FEATURE: no timestamps or unicode
@@ -201,7 +201,7 @@ class SyslogClient:
             self._sock.sendto(data, self._info)
         except:
             if self._option & LOG_CONS:
-                print(self._priorityprefixes[LOG_CRIT] + "Exception in sendto()")
+                print(self._priorityprefixes[LOG_CRIT] + "syslog: Exception in sendto()")
             # throw away the socket and get a new one next time
             try: self._sock.close()
             except: pass
@@ -221,7 +221,7 @@ class SyslogClient:
     def warning(self, msg):
         self.syslog(LOG_WARNING, msg)
 
-    # EXTENSION: not in the SysLogHandler API (because NOTICE is not a default LogHandler level)
+    # EXTENSION: not in the SysLogHandler API (because NOTICE isn't a default LogHandler level)
     def notice(self, msg):
         self.syslog(LOG_NOTICE, msg)
 
@@ -231,5 +231,4 @@ class SyslogClient:
     def debug(self, msg):
         self.syslog(LOG_DEBUG, msg)
 
-    # FEATURE: LOG_ALERT and LOG_EMERG don't get convenience functions as they have an extra side-effect
-    # (this library will automatically print such events on the console)
+    # FEATURE: LOG_ALERT and LOG_EMERG don't get convenience functions
