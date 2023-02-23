@@ -25,9 +25,10 @@ class _PrintLogHandler:
         print(msg)
 
 class PM1006:
+    _how_broken = None
     _adjust_mul = None
     _adjust_add = None
-    _smoothing = None
+    _exp_smooth = None
 
     def __init__(self, rxpin):
         self.set_logger(None)
@@ -46,12 +47,15 @@ class PM1006:
         else:
             self._logger = logger
 
+    def set_broken(self, broken):
+        self._how_broken = broken
+
     def set_adjust(self, mul, add):
         self._adjust_mul = mul
         self._adjust_add = add
 
-    def set_smooth(self, smoothing):
-        self._smoothing = smoothing
+    def set_smooth(self, smooth):
+        self._exp_smooth = smooth
 
 
     # read_raw() returns an array of values
@@ -79,12 +83,12 @@ class PM1006:
                 return None
             if data is None or len(data) < 20:
                 noreadcounter += 1
-                if noreadcounter == 10:
-                    self._logger.warning('uart.read() failed %d times' % (noreadcounter,))
-                elif noreadcounter == 20:
-                    self._logger.error('uart.read() failed %d times' % (noreadcounter,))
-                elif noreadcounter >= 30 and (noreadcounter % 10) == 0:
-                    self._logger.critical('uart.read() failed %d times' % (noreadcounter,))
+                if noreadcounter >= 100:
+                    if noreadcounter % 100 == 0:
+                        self._logger.critical('uart.read() failed %d times' % (noreadcounter,))
+                else:
+                    if noreadcounter % 10 == 0:
+                        self._logger.warning('uart.read() failed %d times' % (noreadcounter,))
                 continue
             break
         self._logger.debug('Read from UART (%d bytes)' % (len(data),))
@@ -105,7 +109,7 @@ class PM1006:
             df4 = data[offset+6]
             raw.append(df3*256+df4)
 
-        self._logger.info('UART readings are %s' % (repr(raw),))
+        self._logger.debug('UART readings are %s' % (repr(raw),))
 
         return raw
 
@@ -120,7 +124,7 @@ class PM1006:
             return None
 
         if len(raw) < 1:
-            self._logger.critical('UART readings not found')
+            self._logger.error('UART readings not found')
             return None
 
         if len(raw) > 6:
@@ -131,19 +135,26 @@ class PM1006:
             self._logger.warning('UART readings too volatile')
             return None
 
-        if (len(raw) >= 6):
-            one = float(raw[2] + raw[3]) / 2
-        elif (len(raw) == 5):
-            one = float(raw[2])
-        elif (len(raw) == 4):
-            one = float(raw[1] + raw[2]) / 2
-        elif (len(raw) == 3):
-            one = float(raw[1])
-        else:
-            self._logger.error('UART readings missing')
-            return None
+        broken = 0
+        if self._how_broken is not None:
+            while len(raw) and raw[0] < self._how_broken:
+                broken += 1
+                raw.pop(0)
 
-        return one
+        if len(raw) < 3:
+            if broken:
+                self._logger.error('UART readings broken')
+            else:
+                self._logger.error('UART readings missing')
+            return None
+        elif (len(raw) == 3):
+            return float(raw[1])
+        elif (len(raw) == 4):
+            return float(raw[1] + raw[2]) / 2
+        elif (len(raw) == 5):
+            return float(raw[2])
+        else:
+            return float(raw[2] + raw[3]) / 2
 
 
 
@@ -190,6 +201,9 @@ class PM1006:
         if adjusted is None or oldvalue is None:
             return adjusted
 
+        if self._how_broken is not None:
+            return adjusted
+
         return min(oldvalue, adjusted)
 
 
@@ -204,10 +218,10 @@ class PM1006:
         if filtered is None or oldvalue is None:
             return filtered
 
-        if self._smoothing is None:
+        if self._exp_smooth is None:
             return filtered
 
-        return (oldvalue * self._smoothing) + (filtered * (1 - self._smoothing))
+        return (oldvalue * self._exp_smooth) + (filtered * (1 - self._exp_smooth))
 
 
 

@@ -40,8 +40,9 @@ logger.info('Started')
 # Set up the PM1006 sensor
 pm1006 = PM1006(config.pm1006_rxpin)
 pm1006.set_logger(logger)
+pm1006.set_broken(config.pm1006_how_broken)
 pm1006.set_adjust(config.pm1006_adjust_mul, config.pm1006_adjust_add)
-pm1006.set_smooth(config.pm1006_smooth_exp)
+pm1006.set_smooth(config.pm1006_exp_smooth)
 
 # Set up UMQTT
 mqtt = MQTTClient(config.mqtt_client_id, config.mqtt_broker,
