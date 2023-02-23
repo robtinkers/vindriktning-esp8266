@@ -25,8 +25,8 @@ class _PrintLogHandler:
         print(msg)
 
 class PM1006:
-    _adjust_add = None
     _adjust_mul = None
+    _adjust_add = None
     _smoothing = None
 
     def __init__(self, rxpin):
@@ -46,9 +46,9 @@ class PM1006:
         else:
             self._logger = logger
 
-    def set_adjust(self, add, mul):
-        self._adjust_add = add
+    def set_adjust(self, mul, add):
         self._adjust_mul = mul
+        self._adjust_add = add
 
     def set_smooth(self, smoothing):
         self._smoothing = smoothing
@@ -64,7 +64,7 @@ class PM1006:
     #
     # read_smoothed() does exponential smoothing on the filtered value (configured by caller, default is no-op)
     #
-    # Note that read_adjusted() also keeps a ring buffer of the latest values
+    # Note that read_adjusted() also keeps a ring buffer of the latest values (i.e. adjusted, not filtered or smoothed)
     # This will be used in a traffic light system at some point in the future
 
 
@@ -157,10 +157,10 @@ class PM1006:
             return None
 
         adjusted = one
-        if self._adjust_add is not None:
-            adjusted = adjusted + self._adjust_add
         if self._adjust_mul is not None:
-            adjusted = adjusted * self._adjust_mul
+            adjusted *= self._adjust_mul
+        if self._adjust_add is not None:
+            adjusted += self._adjust_add
         if adjusted < 0:
             adjusted = 0.0
 

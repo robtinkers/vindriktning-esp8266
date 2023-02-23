@@ -22,7 +22,7 @@ def wlan_connect():
         wlan.connect(config.wifi_network, config.wifi_password)
         for i in range(0, 5):
             time.sleep(1)
-            if wlan.isconnected()
+            if wlan.isconnected():
                 time.sleep(5) # TODO: check this is still required
                 return True
 
@@ -40,7 +40,7 @@ logger.info('Started')
 # Set up the PM1006 sensor
 pm1006 = PM1006(config.pm1006_rxpin)
 pm1006.set_logger(logger)
-pm1006.set_adjust(config.pm1006_adjust_add, config.pm1006_adjust_mul)
+pm1006.set_adjust(config.pm1006_adjust_mul, config.pm1006_adjust_add)
 pm1006.set_smooth(config.pm1006_smooth_exp)
 
 # Set up UMQTT

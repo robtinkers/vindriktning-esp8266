@@ -18,6 +18,6 @@ mqtt_password       = 'mqtt_password'
 
 mqtt_topic_pmvt     = '%s/feeds/my.feed' % (mqtt_username,)
 pm1006_rxpin        = 13
-pm1006_adjust_add   = None # add first
-pm1006_adjust_mul   = None # then multiply
+pm1006_adjust_mul   = None # multiply first
+pm1006_adjust_add   = None # then add
 pm1006_smooth_exp   = None # exponential smoothing [0,1.0)
