@@ -63,8 +63,8 @@ while True:
 
     # LEDs
 
-    if len(pm1006.adjusted_ringbuf):
-        logger.debug('PMVT hourly average = %f' % ((sum(pm1006.adjusted_ringbuf) / len(pm1006.adjusted_ringbuf)),))
+    if len(pm1006._adjbuf):
+        logger.debug('PMVT hourly average = %f' % ((sum(pm1006._adjbuf) / len(pm1006._adjbuf)),))
         # TODO: this is very much a work in progress, waiting on the hardware side to be done first
         # e.g.
         # if hourly average > threshold then red

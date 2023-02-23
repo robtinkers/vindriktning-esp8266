@@ -147,8 +147,8 @@ class PM1006:
 
 
 
-    _ringbuf = []
-    _ringidx = None
+    _adjbuf = []
+    _adjidx = None
 
     def read_adjusted(self):
         one = self.read_one()
@@ -167,14 +167,14 @@ class PM1006:
         # keep a ring buffer of the latest 120 values (adjusted but not filtered/smoothed)
         # this is ~60 minutes worth, assuming no read errors
         # TODO: is the read error rate high enough that it's worth tracking timestamps?
-        if len(self._ringbuf) < 120:
-            self._ringbuf.append(adjusted)
+        if len(self._adjbuf) < 120:
+            self._adjbuf.append(adjusted)
         else:
-            if self._ringidx is None:
-                self._ringidx = 0
+            if self._adjidx is None:
+                self._adjidx = 0
             else:
-                self._ringidx = (self._ringidx+1) % 120
-            self._ringbuf[self._ringidx] = adjusted
+                self._adjidx = (self._adjidx+1) % 120
+            self._adjbuf[self._adjidx] = adjusted
 
         return adjusted
 
