@@ -27,14 +27,9 @@ class _PrintLogHandler:
 class PM1006:
     _adjust_add = None
     _adjust_mul = None
-    _smooth_exp = None
-    
-    adjusted_ringbuf = []
-    adjusted_ringidx = None
-    last_adjusted = None
-    last_smoothed = None
+    _smoothing = None
 
-    def __init__(self, rxpin, **kwargs):
+    def __init__(self, rxpin):
         self.set_logger(None)
 
         # tx is required but not used, doesn't even need to be connected
@@ -55,10 +50,12 @@ class PM1006:
         self._adjust_add = add
         self._adjust_mul = mul
 
-    def set_smooth(self, smooth):
-        self._smooth_exp = smooth
+    def set_smooth(self, smoothing):
+        self._smoothing = smoothing
 
-    def read_uart(self, **kwargs):
+
+
+    def read_raw(self):
         self._logger.debug('Waiting for UART')
         noreadcounter = 0
         while True: # TODO: timer argument to break out of this
@@ -79,7 +76,7 @@ class PM1006:
             break
         self._logger.debug('Read from UART (%d bytes)' % (len(data),))
 
-        readings = []
+        raw = []
         for offset in range(0,len(data),20):
             if offset+20 > len(data):
                 self._logger.warning('Partial frame at %d, ignoring reading' % (offset,))
@@ -93,95 +90,126 @@ class PM1006:
                 continue
             df3 = data[offset+5]
             df4 = data[offset+6]
-            readings.append(df3*256+df4)
+            raw.append(df3*256+df4)
 
-        self._logger.info('UART readings are %s' % (repr(readings),))
+        self._logger.info('UART readings are %s' % (repr(raw),))
 
-        return readings
+        return raw
+
+
+    # read_raw() returns an array of values
+    #
+    # read_one() converts that array into one value (e.g. median)
+    #
+    # read_adjusted() scales that one value linearly (typically a no-op)
+    #
+    # read_filtered() does some filter on the adjusted value (e.g. local minimum)
+    #
+    # read_smoothed() does exponential smoothing on the filtered value
+    #
+    # Note that read_adjusted also keeps a ring buffer of the latest values
+    # This will be used in a traffic light system at some point in the future
+
+
+    def read_one(self):
+
+        raw = self.read_raw()
+
+        if raw is None:
+            # we already logged something
+            return None
+
+        if len(raw) < 1:
+            self._logger.critical('UART readings not found')
+            return None
+
+        if len(raw) > 6:
+            raw = raw[-6:]
+        raw.sort()
+
+        if raw[-1] >= raw[0] + 100:
+            self._logger.warning('UART readings too volatile')
+            return None
+
+        if (len(raw) >= 6):
+            one = float(raw[2] + raw[3]) / 2
+        elif (len(raw) == 5):
+            one = float(raw[2])
+        elif (len(raw) == 4):
+            one = float(raw[1] + raw[2]) / 2
+        elif (len(raw) == 3):
+            one = float(raw[1])
+        else:
+            self._logger.error('UART readings missing')
+            return None
+
+        return one
+
+
+
+    _ringbuf = []
+    _ringidx = None
+
+    def read_adjusted(self):
+        one = self.read_one()
+        if one is None:
+            # we already logged something
+            return None
+
+        adjusted = one
+        if self._adjust_add is not None:
+            adjusted = adjusted + self._adjust_add
+        if self._adjust_mul is not None:
+            adjusted = adjusted * self._adjust_mul
+        if adjusted < 0:
+            adjusted = 0.0
+
+        # keep a ring buffer of the latest 120 values (adjusted but not filtered/smoothed)
+        # this is ~60 minutes worth, assuming no read errors
+        # TODO: is the read error rate high enough that it's worth tracking timestamps?
+        if len(self._ringbuf) < 120:
+            self._ringbuf.append(adjusted)
+        else:
+            if self._ringidx is None:
+                self._ringidx = 0
+            else:
+                self._ringidx = (self._ringidx+1) % 120
+            self._ringbuf[self._ringidx] = adjusted
+
+        return adjusted
+
+
+
+    _old_adjusted = None
+
+    def read_filtered(self):
+        oldvalue = self._old_adjusted
+        adjusted = self.read_adjusted()
+        self._old_adjusted = adjusted
+
+        if adjusted is None or oldvalue is None:
+            return adjusted
+
+        return min(oldvalue, adjusted)
+
+
+
+    _old_filtered = None
+
+    def read_smoothed(self):
+        oldvalue = self._old_filtered
+        filtered = self.read_filtered()
+        self._old_filtered = filtered
+
+        if filtered is None or oldvalue is None:
+            return filtered
+
+        if self._smoothing is None:
+            return filtered
+
+        return (oldvalue * self._smoothing) + (filtered * (1 - self._smoothing))
 
 
 
     def read(self):
-
-        readings = self.read_uart()
-
-        if readings is None:
-            # we already logged something
-            self.last_adjusted = None
-            self.last_smoothed = None
-            return None
-
-        if len(readings) < 1:
-            self._logger.critical('UART readings not found')
-            self.last_adjusted = None
-            self.last_smoothed = None
-            return None
-
-        # the sensor readings can be very spiky, so we do a lot of smoothing...
-
-        # 1.
-        if len(readings) > 6:
-            readings = readings[-6:]
-        readings.sort()
-
-    #    # 2.
-    #    if readings[-1] == 0:
-    #        self._logger.warning('UART readings all zero')
-    #        self.last_adjusted = None
-    #        self.last_smoothed = None
-    #        return None
-
-        # 3.
-        if readings[-1] >= readings[0] + 100:
-            self._logger.warning('UART readings too volatile')
-            self.last_adjusted = None
-            self.last_smoothed = None
-            return None
-
-        # 4.
-        if (len(readings) >= 6):
-            pm1006 = float(readings[2] + readings[3]) / 2
-        elif (len(readings) == 5):
-            pm1006 = float(readings[2])
-        elif (len(readings) == 4):
-            pm1006 = float(readings[1] + readings[2]) / 2
-        elif (len(readings) == 3):
-            pm1006 = float(readings[1])
-        else:
-            self._logger.error('UART readings missing')
-            self.last_adjusted = None
-            self.last_smoothed = None
-            return None
-
-        #
-        if self._adjust_add is not None:
-            pm1006 = pm1006 + self._adjust_add
-        if self._adjust_mul is not None:
-            pm1006 = pm1006 * self._adjust_mul
-        if pm1006 < 0:
-            pm1006 = 0.0
-
-        # keep a ring buffer of the latest 120 values (adjusted but not smoothed)
-        # this is ~60 minutes worth, assuming no read errors
-        # TODO: is the read error rate high enough that it's worth tracking timestamps?
-        if len(self.adjusted_ringbuf) < 120:
-            self.adjusted_ringbuf.append(pm1006)
-        else:
-            if self.adjusted_ringidx is None:
-                self.adjusted_ringidx = 0
-            else:
-                self.adjusted_ringidx = (self.adjusted_ringidx+1) % 120
-            self.adjusted_ringbuf[self.adjusted_ringidx] = pm1006
-
-        # 5.
-        if self.last_adjusted is not None and pm1006 > self.last_adjusted:
-            (pm1006, self.last_adjusted) = (self.last_adjusted, pm1006)
-        else:
-            self.last_adjusted = pm1006
-
-        # 5.
-        if self.last_smoothed is not None and self._smooth_exp is not None:
-            pm1006 = (self.last_smoothed * self._smooth_exp) + (pm1006 * (1 - self._smooth_exp))
-        self.last_smoothed = pm1006
-
-        return pm1006
+        return self.read_smoothed()
