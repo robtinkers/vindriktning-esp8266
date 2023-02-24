@@ -179,16 +179,22 @@ class PM1006:
                 if self._adjidx is None:
                     self._adjidx = 0
                 else:
-                    self._adjidx = (self._adjidx+1) % 120
+                    self._adjidx = (self._adjidx + 1) % 120
                 self._logger.debug('Adding latest value to ring buffer %d' % (adjusted,))
                 self._adjbuf[self._adjidx] = adjusted
 
         else: # there were read errors, so substitute in the last-known-good value
 
-            if self._adjidx is not None:
+            if len(self._adjbuf) == 0:
+                pass
+            elif len(self._adjbuf) < 120:
+                oldval = self._adjbuf[-1]
+                self._logger.debug('Adding last-known-good value to ring buffer (%d)' % (oldval,))
+                self._adjbuf.append(oldval)
+            else:
                 oldval = self._adjbuf[self._adjidx]
                 self._logger.debug('Adding last-known-good value to ring buffer (%d)' % (oldval,))
-                self._adjidx = (self._adjidx+1) % 120
+                self._adjidx = (self._adjidx + 1) % 120
                 self._adjbuf[self._adjidx] = oldval
 
         return adjusted
