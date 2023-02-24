@@ -60,7 +60,7 @@ class PM1006:
 
     # read_raw() returns an array of values
     #
-    # read_one() converts that array into one value (e.g. median)
+    # read_basic() converts that array into one value (e.g. median)
     #
     # read_adjusted() scales that one value linearly (configured by caller, default is no-op)
     #
@@ -112,7 +112,7 @@ class PM1006:
 
 
 
-    def read_one(self):
+    def read_basic(self):
 
         raw = self.read_raw()
 
@@ -145,17 +145,17 @@ class PM1006:
                 self._logger.error('UART readings are missing')
             return None
         elif (len(raw) == 3):
-            one = float(raw[1])
+            basic = float(raw[1])
         elif (len(raw) == 4):
-            one = float(raw[1] + raw[2]) / 2
+            basic = float(raw[1] + raw[2]) / 2
         elif (len(raw) == 5):
-            one = float(raw[2])
+            basic = float(raw[2])
         else:
-            one = float(raw[2] + raw[3]) / 2
+            basic = float(raw[2] + raw[3]) / 2
 
-        self._logger.debug('UART reading is %s' % (repr(one),))
+        self._logger.debug('Basic value is %s' % (repr(basic),))
 
-        return one
+        return basic
 
 
 
@@ -163,7 +163,7 @@ class PM1006:
     _adjidx = None
 
     def read_adjusted(self):
-        adjusted = self.read_one()
+        adjusted = self.read_basic()
 
         if adjusted is not None:
 
@@ -174,20 +174,24 @@ class PM1006:
             if adjusted < 0:
                 adjusted = 0.0
 
+            self._logger.debug('Adjusted value is %s' % (repr(adjusted),))
+
             # keep a ring buffer of the latest 120 values (adjusted but not filtered/smoothed)
 
             if len(self._adjbuf) < 120:
-                self._logger.debug('Adding adjusted value to ring buffer (%s)' % (repr(adjusted),))
+                self._logger.debug('Adding adjusted value to ring buffer')
                 self._adjbuf.append(adjusted)
             else:
                 if self._adjidx is None:
                     self._adjidx = 0
                 else:
                     self._adjidx = (self._adjidx + 1) % 120
-                self._logger.debug('Adding adjusted value to ring buffer (%s)' % (repr(adjusted),))
+                self._logger.debug('Adding adjusted value to ring buffer')
                 self._adjbuf[self._adjidx] = adjusted
 
         else: # there were read errors, so substitute in the last-known-good value
+
+            self._logger.debug('Adjusted value is %s' % (repr(adjusted),))
 
             if len(self._adjbuf) == 0:
                 pass
@@ -205,31 +209,43 @@ class PM1006:
 
 
 
-    _old_adjusted = None
+    _last_adjusted = None
 
     def read_filtered(self):
-        oldvalue = self._old_adjusted
+        oldvalue = self._last_adjusted
         adjusted = self.read_adjusted()
-        self._old_adjusted = adjusted
+        self._last_adjusted = adjusted
 
-        if adjusted is None or oldvalue is None:
-            return adjusted
+        try: filtered = min(oldvalue, adjusted)
+        except: filtered = adjusted # one of those variables was None
 
-        return min(oldvalue, adjusted)
+        self._logger.debug('Filtered value is %s' % (repr(filtered),))
+
+        return filtered
 
 
 
-    _old_smoothed = None
+    _last_smoothed = None
 
     def read_smoothed(self):
         filtered = self.read_filtered()
 
-        try: self._old_smoothed = (self._old_smoothed * self._exp_smooth) + (filtered * (1 - self._exp_smooth))
-        except TypeError: self._old_smoothed = filtered # one of those variables was None
+        try: smoothed = (self._last_smoothed * self._exp_smooth) + (filtered * (1 - self._exp_smooth))
+        except: smoothed = filtered # one of those variables was None
 
-        return self._old_smoothed
+        self._logger.debug('Smoothed value is %s' % (repr(smoothed),))
+
+        self._last_smoothed = smoothed
+        return smoothed
+
+
+
+    def read_final(self):
+        final = self.read_smoothed()
+        self._logger.debug('Final value is %s' % (repr(final),))
+        return final
 
 
 
     def read(self):
-        return self.read_smoothed()
+        return self.read_final()

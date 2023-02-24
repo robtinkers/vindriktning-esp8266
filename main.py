@@ -13,21 +13,22 @@ class MQTTClient(simple.MQTTClient):
         return bool(self.sock is not None)
 
     def disconnect(self):
-        super().disconnect()
+        try: super().disconnect()
+        except: pass
         self.sock = None
 
 # Helper routine to keep our own code cleaner. NOTE: no timeout, may hang indefinitely
 def wlan_connect():
     while True:
         wlan.active(True)
-        logger.debug('wlan.status = %s' % (repr(wlan.status(),)))
+        logger.debug('wlan.status=%s' % (repr(wlan.status()),))
         wlan.connect(config.wifi_network, config.wifi_password)
         for i in range(0, 5):
             time.sleep(1)
-            logger.debug('wlan.status = %s' % (repr(wlan.status(),)))
+            logger.debug('wlan.status=%s' % (repr(wlan.status()),))
             if wlan.isconnected():
                 time.sleep(5) # TODO: check this is still required
-                logger.debug('wlan.status = %s' % (repr(wlan.status(),)))
+                logger.debug('wlan.status=%s' % (repr(wlan.status()),))
                 return True
 
 # Connect to the network asap so that remote logging works
@@ -64,7 +65,6 @@ while True:
     ## READ PMVT
 
     pmvt = pm1006.read()
-    logger.debug('pm1006.read() = %s' % (repr(pmvt),))
 
     # LEDs
 
@@ -82,11 +82,11 @@ while True:
         logger.info('Connecting to network %s' % (repr((config.wifi_network, '****' if config.wifi_password else config.wifi_password)),))
         try:
             wlan_connect()
-            logger.info('Connected to network %s' % (repr(wlan.ifconfig()),))
+            logger.debuf('Connected to network %s' % (repr(wlan.ifconfig()),))
         except Exception as e:
             logger.critical('Exception %s:%s while connecting to network' % (type(e).__name__, e.args))
     else:
-        logger.debug('Already connected to network (.status=%s)' % (repr(wlan.status()),))
+        logger.debug('Already connected to network (wlan.status=%s)' % (repr(wlan.status()),))
 
     if not wlan.isconnected():
         logger.debug('Ignoring broker while not connected to network')
@@ -96,7 +96,7 @@ while True:
         logger.info('Connecting to broker %s' % (repr((mqtt.server, mqtt.port)),))
         try:
             mqtt.connect() # default is clean_session=True
-            logger.info('Connected to broker %s' % (repr(mqtt.sock),))
+            logger.debuf('Connected to broker %s' % (repr(mqtt.sock),))
         except Exception as e:
             logger.critical('Exception %s:%s while connecting to broker' % (type(e).__name__, e.args))
 
@@ -107,13 +107,19 @@ while True:
 
     if config.mqtt_topic_pmvt is not None:
 
+        logger.debug('mqtt.sock = %s' % (repr(mqtt.sock),))
+
+        oserrno = None
         if pmvt is not None:
-            logger.info('Publishing %s=%s' % (repr(config.mqtt_topic_pmvt), repr(pmvt)))
+            logger.info('Publishing %s' % (repr((config.mqtt_topic_pmvt, pmvt))))
             try:
                 mqtt.publish(config.mqtt_topic_pmvt, '%.2f' % (pmvt,), retain=True)
                 mqtt_last_success = time.time()
                 logger.debug('Publish success!')
-            except Exception as e:
+            except OSError as e:
+                oserrno = e.errno
+                logger.critical('Exception %s:%s while publishing (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_last_success))
+            except:
                 logger.critical('Exception %s:%s while publishing (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_last_success))
         else:
             logger.info('Pinging broker')
@@ -121,10 +127,15 @@ while True:
                 mqtt.ping()
                 mqtt_last_success = time.time()
                 logger.debug('Ping success!')
-            except Exception as e:
+            except OSError as e:
+                oserrno = e.errno
+                logger.critical('Exception %s:%s while pinging (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_last_success))
+            except:
                 logger.critical('Exception %s:%s while pinging (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_last_success))
 
-        if time.time() - mqtt_last_success > 100:
+        logger.debug('mqtt.sock = %s' % (repr(mqtt.sock),))
+
+        if oserrno in (999,) or time.time() - mqtt_last_success > 100:
             logger.warning('Disconnecting from broker')
             try:
                 mqtt.disconnect()
@@ -132,11 +143,11 @@ while True:
             except Exception as e:
                 logger.critical('Exception %s:%s while disconnecting from broker' % (type(e).__name__, e.args))
 
-        if time.time() - mqtt_last_success > 200:
+        if oserrno in (999,) or time.time() - mqtt_last_success > 200:
             logger.warning('Disconnecting from network')
             try:
                 wlan.disconnect()
-                logger.debug('Disconnect success? (.status=%s)' % (repr(wlan.status()),))
+                logger.debug('Disconnect success? (wlan.status=%s)' % (repr(wlan.status()),))
             except Exception as e:
                 logger.critical('Exception %s:%s while disconnecting from network' % (type(e).__name__, e.args))
             mqtt_last_success = time.time() # fake it until you make it
