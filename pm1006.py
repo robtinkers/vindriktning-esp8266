@@ -83,12 +83,9 @@ class PM1006:
                 return None
             if data is None or len(data) < 20:
                 noreadcounter += 1
-                if noreadcounter >= 100:
-                    if noreadcounter % 100 == 0:
-                        self._logger.critical('uart.read() failed %d times' % (noreadcounter,))
-                else:
-                    if noreadcounter % 10 == 0:
-                        self._logger.warning('uart.read() failed %d times' % (noreadcounter,))
+                if noreadcounter >= 20:
+                    self._logger.error('UART readings failed')
+                    return None
                 continue
             break
         self._logger.debug('Read from UART (%d bytes)' % (len(data),))
@@ -143,9 +140,9 @@ class PM1006:
 
         if len(raw) < 3:
             if broken:
-                self._logger.error('UART readings broken')
+                self._logger.error('UART readings are broken')
             else:
-                self._logger.error('UART readings missing')
+                self._logger.error('UART readings are missing')
             return None
         elif (len(raw) == 3):
             return float(raw[1])
@@ -176,20 +173,23 @@ class PM1006:
             # keep a ring buffer of the latest 120 values (adjusted but not filtered/smoothed)
 
             if len(self._adjbuf) < 120:
+                self._logger.debug('Adding latest value to ring buffer (%d)' % (adjusted,))
                 self._adjbuf.append(adjusted)
             else:
                 if self._adjidx is None:
                     self._adjidx = 0
                 else:
                     self._adjidx = (self._adjidx+1) % 120
+                self._logger.debug('Adding latest value to ring buffer %d' % (adjusted,))
                 self._adjbuf[self._adjidx] = adjusted
 
-        else: # there were read errors, so substitute in the last known-good value
+        else: # there were read errors, so substitute in the last-known-good value
 
             if self._adjidx is not None:
-                oldval = self._adj[self._adjidx]
+                oldval = self._adjbuf[self._adjidx]
+                self._logger.debug('Adding last-known-good value to ring buffer (%d)' % (oldval,))
                 self._adjidx = (self._adjidx+1) % 120
-                self._adjbuf[self._adjidx] = adjusted
+                self._adjbuf[self._adjidx] = oldval
 
         return adjusted
 
@@ -205,27 +205,19 @@ class PM1006:
         if adjusted is None or oldvalue is None:
             return adjusted
 
-#        if self._how_broken is not None:
-#            return adjusted
-
         return min(oldvalue, adjusted)
 
 
 
-    _old_filtered = None
+    _old_smoothed = None
 
     def read_smoothed(self):
-        oldvalue = self._old_filtered
         filtered = self.read_filtered()
-        self._old_filtered = filtered
 
-        if filtered is None or oldvalue is None:
-            return filtered
+        try: self._old_smoothed = (self._old_smoothed * self._exp_smooth) + (filtered * (1 - self._exp_smooth))
+        except TypeError: self._old_smoothed = filtered # one of those variables was None
 
-        if self._exp_smooth is None:
-            return filtered
-
-        return (oldvalue * self._exp_smooth) + (filtered * (1 - self._exp_smooth))
+        return self._old_smoothed
 
 
 

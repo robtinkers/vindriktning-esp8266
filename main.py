@@ -65,7 +65,7 @@ while True:
     # LEDs
 
     if len(pm1006._adjbuf):
-        logger.debug('PMVT hourly average = %f' % ((sum(pm1006._adjbuf) / len(pm1006._adjbuf)),))
+        logger.debug('Rolling hourly average = %f' % ((sum(pm1006._adjbuf) / len(pm1006._adjbuf)),))
         # TODO: this is very much a work in progress, waiting on the hardware side to be done first
         # e.g.
         # if hourly average > threshold then red
@@ -85,7 +85,7 @@ while True:
         logger.debug('Already connected to network %s' % (repr(wlan.ifconfig()),))
 
     if not wlan.isconnected():
-        logger.warning('Ignoring broker while not connected to network')
+        logger.info('Ignoring broker while not connected to network')
     elif not mqtt.isconnected():
         logger.info('Connecting to broker % s' % (repr((mqtt.server,mqtt.port)),))
         try:
@@ -119,10 +119,12 @@ while True:
                 logger.critical('Exception %s:%s while pinging broker' % (type(e).__name__, e.args))
 
         if time.time() - mqtt_last_success > 100:
+            logger.warning('Disconnecting from broker')
             try: mqtt.disconnect()
             except: pass
 
         if time.time() - mqtt_last_success > 200:
+            logger.warning('Disconnecting from network')
             try: wlan.disconnect()
             except: pass
             mqtt_last_success = time.time() # fake it until you make it
