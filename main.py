@@ -1,9 +1,10 @@
-import config
-from umqtt import simple # TODO: investigate umqtt.robust
 import network, sys, time
-import os # for offline logging
+from umqtt import simple # TODO: investigate umqtt.robust
 import usyslog
 from pm1006 import PM1006
+
+import config
+print()
 
 # Extend the basic UMQTT client with a couple of helpers to keep our own code cleaner
 class MQTTClient(simple.MQTTClient):
@@ -68,7 +69,7 @@ while True:
     # LEDs
 
     if len(pm1006._adjbuf):
-        logger.debug('Rolling hourly average = %f' % ((sum(pm1006._adjbuf) / len(pm1006._adjbuf)),))
+        logger.debug('Rolling hourly mean = %f' % ((sum(pm1006._adjbuf) / len(pm1006._adjbuf)),))
         # TODO: this is very much a work in progress, waiting on the hardware side to be done first
         # e.g.
         # if hourly average > threshold then red
@@ -85,7 +86,7 @@ while True:
         except Exception as e:
             logger.critical('Exception %s:%s while connecting to network' % (type(e).__name__, e.args))
     else:
-        logger.debug('Already connected to network (%s)' % (repr(wlan.status()),))
+        logger.debug('Already connected to network (.status=%s)' % (repr(wlan.status()),))
 
     if not wlan.isconnected():
         logger.debug('Ignoring broker while not connected to network')
@@ -107,13 +108,13 @@ while True:
     if config.mqtt_topic_pmvt is not None:
 
         if pmvt is not None:
-            logger.info('Publishing %s %.2f' % (repr(config.mqtt_topic_pmvt), pmvt))
+            logger.info('Publishing %s=%s' % (repr(config.mqtt_topic_pmvt), repr(pmvt)))
             try:
                 mqtt.publish(config.mqtt_topic_pmvt, '%.2f' % (pmvt,), retain=True)
                 mqtt_last_success = time.time()
                 logger.debug('Publish success!')
             except Exception as e:
-                logger.critical('Exception %s:%s while publishing (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_mast_success))
+                logger.critical('Exception %s:%s while publishing (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_last_success))
         else:
             logger.info('Pinging broker')
             try:
@@ -121,7 +122,7 @@ while True:
                 mqtt_last_success = time.time()
                 logger.debug('Ping success!')
             except Exception as e:
-                logger.critical('Exception %s:%s while pinging (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_mast_success))
+                logger.critical('Exception %s:%s while pinging (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_last_success))
 
         if time.time() - mqtt_last_success > 100:
             logger.warning('Disconnecting from broker')
@@ -135,7 +136,7 @@ while True:
             logger.warning('Disconnecting from network')
             try:
                 wlan.disconnect()
-                logger.debug('Disconnect success? (%s)' % (repr(wlan.status()),))
+                logger.debug('Disconnect success? (.status=%s)' % (repr(wlan.status()),))
             except Exception as e:
                 logger.critical('Exception %s:%s while disconnecting from network' % (type(e).__name__, e.args))
             mqtt_last_success = time.time() # fake it until you make it

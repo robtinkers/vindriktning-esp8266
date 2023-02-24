@@ -3,6 +3,7 @@
 from machine import unique_id
 from ubinascii import hexlify
 
+print()
 machine_id = hexlify(unique_id()).decode()
 print('MACHINE_ID = %s' % machine_id)
 

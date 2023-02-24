@@ -145,13 +145,17 @@ class PM1006:
                 self._logger.error('UART readings are missing')
             return None
         elif (len(raw) == 3):
-            return float(raw[1])
+            one = float(raw[1])
         elif (len(raw) == 4):
-            return float(raw[1] + raw[2]) / 2
+            one = float(raw[1] + raw[2]) / 2
         elif (len(raw) == 5):
-            return float(raw[2])
+            one = float(raw[2])
         else:
-            return float(raw[2] + raw[3]) / 2
+            one = float(raw[2] + raw[3]) / 2
+
+        self._logger.debug('UART reading is %s' % (repr(one),))
+
+        return one
 
 
 
@@ -173,14 +177,14 @@ class PM1006:
             # keep a ring buffer of the latest 120 values (adjusted but not filtered/smoothed)
 
             if len(self._adjbuf) < 120:
-                self._logger.debug('Adding latest value to ring buffer (%d)' % (adjusted,))
+                self._logger.debug('Adding adjusted value to ring buffer (%s)' % (repr(adjusted),))
                 self._adjbuf.append(adjusted)
             else:
                 if self._adjidx is None:
                     self._adjidx = 0
                 else:
                     self._adjidx = (self._adjidx + 1) % 120
-                self._logger.debug('Adding latest value to ring buffer %d' % (adjusted,))
+                self._logger.debug('Adding adjusted value to ring buffer (%s)' % (repr(adjusted),))
                 self._adjbuf[self._adjidx] = adjusted
 
         else: # there were read errors, so substitute in the last-known-good value
@@ -189,11 +193,11 @@ class PM1006:
                 pass
             elif len(self._adjbuf) < 120:
                 oldval = self._adjbuf[-1]
-                self._logger.debug('Adding last-known-good value to ring buffer (%d)' % (oldval,))
+                self._logger.debug('Adding last-known-good value to ring buffer (%s)' % (repr(oldval),))
                 self._adjbuf.append(oldval)
             else:
                 oldval = self._adjbuf[self._adjidx]
-                self._logger.debug('Adding last-known-good value to ring buffer (%d)' % (oldval,))
+                self._logger.debug('Adding last-known-good value to ring buffer (%s)' % (repr(oldval),))
                 self._adjidx = (self._adjidx + 1) % 120
                 self._adjbuf[self._adjidx] = oldval
 
