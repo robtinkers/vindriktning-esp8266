@@ -207,7 +207,7 @@ class SyslogClient:
             except: pass
             self._sock = None
 
-    #### Implement (part of) the SysLogHander API ...
+    #### Implement (part of) the SysLogHandler API ...
 
     def close(self):
         self.closelog()
