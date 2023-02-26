@@ -65,6 +65,8 @@ next_publish_time = time.time() + 45
 
 readings = []
 
+last_pmvt = None
+
 while True:
 
     try:
@@ -74,8 +76,11 @@ while True:
         vnow = pm1006.read_raw()
         if vnow is None:
             vnow = []
+        #print('vnow = %s' % repr(vnow))
         vnow.sort()
 
+        if config.pm1006_how_broken is not None:
+            while len(vnow) and vnow[0] < config.pm1006_how_broken: vnow.pop(0) # drop any broken values
         if len(vnow):
             vnow = vnow[len(vnow)//2] # median
             if config.pm1006_adjust_add is not None:
@@ -86,34 +91,41 @@ while True:
         else:
             vnow = None
             readings.append(-1)
-
-        ## CALC OTHER VALUES
+        #print('vnow = %s' % repr(vnow))
 
         readings = readings[-120:] # we get a fresh batch of readings every ~30 seconds, so always keep one hour
 
-        v60m = readings.copy()
-        v60m.sort()
-        while len(v60m) and v60m[0] == -1: v60m.pop(0) # drop any negative values used as padding
-        if len(v60m):
-            v60m = sum(v60m) / len(v60m) # mean (of medians)
-        else:
-            v60m = None
-
-        v05m = readings[-10:] # no .copy() needed; this is 10 batches (~5 minutes)
-        v05m.sort()
-        while len(v05m) and v05m[0] == -1: v05m.pop(0) # drop any negative values used as padding
-        if len(v05m):
-            v05m = v05m[len(v05m)//2] # median (of medians)
-        else:
-            v05m = None
+        ## CALC OTHER VALUES
 
         v90s = readings[-3:] # no .copy() needed; this is 3 batches (so median will filter out one extreme batch)
+        #print('v90s = %s' % repr(v90s))
         v90s.sort()
         while len(v90s) and v90s[0] == -1: v90s.pop(0) # drop any negative values used as padding
         if len(v90s):
             v90s = v90s[len(v90s)//2] # median (of medians)
         else:
             v90s = None
+        #print('v90s = %s' % repr(v90s))
+
+        v05m = readings[-10:] # no .copy() needed; this is 10 batches (~5 minutes)
+        #print('v05m = %s' % repr(v05m))
+        v05m.sort()
+        while len(v05m) and v05m[0] == -1: v05m.pop(0) # drop any negative values used as padding
+        if len(v05m):
+            v05m = v05m[len(v05m)//2] # median (of medians)
+        else:
+            v05m = None
+        #print('v05m = %s' % repr(v05m))
+
+        v60m = readings.copy()
+        #print('v60m = %s' % repr(v60m))
+        v60m.sort()
+        while len(v60m) and v60m[0] == -1: v60m.pop(0) # drop any negative values used as padding
+        if len(v60m):
+            v60m = sum(v60m) / len(v60m) # mean (of medians)
+        else:
+            v60m = None
+        #print('v60m = %s' % repr(v60m))
 
         log.debug('vnow=%s / v90s=%s / v05m=%s / v60m=%s' % (repr(vnow),repr(v90s),repr(v05m),repr(v60m)))
 
@@ -126,7 +138,14 @@ while True:
 
         ## DATA?
 
-        pmvt = v90s
+        #print('(last_pmvt, v90s) = %s' % (repr((last_pmvt, v90s))))
+        if last_pmvt is None:
+            (pmvt, last_pmvt) = (v90s, v90s)
+        elif v90s is None:
+            (pmvt, last_pmvt) = (last_pmvt, v90s)
+        else:
+            (pmvt, last_pmvt) = (min(v90s, last_pmvt), v90s)
+        #print('(last_pmvt, pmvt) = %s' % (repr((last_pmvt, pmvt))))
 
         if pmvt is None:
             continue
@@ -171,3 +190,4 @@ while True:
 
     except Exception as e:
         log.syslog(usyslog.LOG_ALERT, 'UNHANDLED EXCEPTION %s:%s' % (type(e).__name__, e.args))
+        raise e
