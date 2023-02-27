@@ -92,7 +92,7 @@ while True:
             # you can effectively noop the median if your filter returns an array with one element
             # e.g. pm1006_filter = lambda values: [sum(values)/len(values)] if len(values) else []
             vnow = max(0, vnow) # clamp
-            readings.append(None)
+            readings.append(vnow)
         else:
             vnow = None
             readings.append(VNOTFOUND)
