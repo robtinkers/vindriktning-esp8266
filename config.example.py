@@ -19,6 +19,5 @@ mqtt_password       = 'mqtt_password'
 
 mqtt_topic_pmvt     = '%s/feeds/my.feed' % (mqtt_username,)
 pm1006_rxpin        = 13
-pm1006_how_broken   = None # ignore raw readings less than this
-pm1006_adjust_add   = None # then add
-#pm1006_exp_smooth   = None # finally exponential smoothing [0,1.0)
+pm1006_filter       = None
+pm1006_smooth       = min

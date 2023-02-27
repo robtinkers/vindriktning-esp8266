@@ -71,81 +71,82 @@ while True:
 
     try:
 
-        ## READ VNOW
+        ## CALCULATE VNOW AND UPDATE READINGS
 
         vnow = pm1006.read_raw()
         if vnow is None:
             vnow = []
-        #print('vnow = %s' % repr(vnow))
-        vnow.sort()
 
-        if config.pm1006_how_broken is not None:
-            while len(vnow) and vnow[0] < config.pm1006_how_broken: vnow.pop(0) # drop any broken values
+        if config.pm1006_filter is None:
+            pass
+        elif callable(config.pm1006_filter):
+            vnow = config.pm1006_filter(vnow) # must return something [indexable] and .sort()able (TLDR: a list)
+        else: # assume a constant adjustment
+            vnow = [config.pm1006_filter + v for v in vnow]
+
         if len(vnow):
+            vnow.sort()
             vnow = vnow[len(vnow)//2] # median
-            if config.pm1006_adjust_add is not None:
-                vnow += config.pm1006_adjust_add
-            if vnow < 0:
-                vnow = 0
-            readings.append(vnow)
+            # you can effectively noop the median if your filter returns an array with one element
+            # e.g. pm1006_filter = lambda values: [sum(values)/len(values)] if len(values) else []
+            vnow = max(0, vnow) # clamp
+            readings.append(None)
         else:
             vnow = None
             readings.append(-1)
-        #print('vnow = %s' % repr(vnow))
 
         readings = readings[-120:] # we get a fresh batch of readings every ~30 seconds, so always keep one hour
 
-        ## CALC OTHER VALUES
+        ## CALCULATE OTHER VALUES
 
         v90s = readings[-3:] # no .copy() needed; this is 3 batches (so median will filter out one extreme batch)
-        #print('v90s = %s' % repr(v90s))
-        v90s.sort()
-        while len(v90s) and v90s[0] == -1: v90s.pop(0) # drop any negative values used as padding
+        v90s = [v for v in v90s if v != -1] # drop any negative values used as padding
         if len(v90s):
+            v90s.sort()
             v90s = v90s[len(v90s)//2] # median (of medians)
         else:
             v90s = None
-        #print('v90s = %s' % repr(v90s))
 
         v05m = readings[-10:] # no .copy() needed; this is 10 batches (~5 minutes)
-        #print('v05m = %s' % repr(v05m))
-        v05m.sort()
-        while len(v05m) and v05m[0] == -1: v05m.pop(0) # drop any negative values used as padding
+        v05m = [v for v in v05m if v != -1] # drop any negative values used as padding
         if len(v05m):
+            v05m.sort()
             v05m = v05m[len(v05m)//2] # median (of medians)
         else:
             v05m = None
-        #print('v05m = %s' % repr(v05m))
 
         v60m = readings.copy()
-        #print('v60m = %s' % repr(v60m))
-        v60m.sort()
-        while len(v60m) and v60m[0] == -1: v60m.pop(0) # drop any negative values used as padding
+        v60m = [v for v in v60m if v != -1] # drop any negative values used as padding
         if len(v60m):
+            v60m.sort()
             v60m = sum(v60m) / len(v60m) # mean (of medians)
         else:
             v60m = None
-        #print('v60m = %s' % repr(v60m))
 
         log.debug('vnow=%s / v90s=%s / v05m=%s / v60m=%s' % (repr(vnow),repr(v90s),repr(v05m),repr(v60m)))
 
-        ## TIME?
+        ## TIME
 
         if time.time() < next_publish_time:
             continue
 #        next_publish_time = time.time() + 300 + random.getrandbits(6) # approx. five to six minutes
         next_publish_time = time.time() + 45
 
-        ## DATA?
+        ## PMVT
 
-        #print('(last_pmvt, v90s) = %s' % (repr((last_pmvt, v90s))))
-        if last_pmvt is None:
-            (pmvt, last_pmvt) = (v90s, v90s)
-        elif v90s is None:
-            (pmvt, last_pmvt) = (last_pmvt, v90s)
-        else:
-            (pmvt, last_pmvt) = (min(v90s, last_pmvt), v90s)
-        #print('(last_pmvt, pmvt) = %s' % (repr((last_pmvt, pmvt))))
+        pmvt = v90s
+
+        if config.pm1006_smooth is None:
+            pass
+        elif last_pmvt is None:
+            (pmvt, last_pmvt) = (pmvt, pmvt)
+        elif pmvt is None:
+            (pmvt, last_pmvt) = (last_pmvt, pmvt)
+        elif callable(config.pm1006_smooth):
+            (pmvt, last_pmvt) = (config.pm1006_smooth(pmvt, last_pmvt), pmvt)
+        else: # exponential smoothing
+            assert (config.pm1006_smooth >= 0 and config.pm1006_smooth < 1)
+            (pmvt, last_pmvt) = ((1 - config.pm1006_smooth) * pmvt + config.pm1006_smooth * last_pmvt, pmvt)
 
         if pmvt is None:
             continue
@@ -190,4 +191,4 @@ while True:
 
     except Exception as e:
         log.syslog(usyslog.LOG_ALERT, 'UNHANDLED EXCEPTION %s:%s' % (type(e).__name__, e.args))
-        raise e
+#        raise e
