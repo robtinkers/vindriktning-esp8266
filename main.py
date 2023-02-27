@@ -138,15 +138,20 @@ while True:
 
         if config.pm1006_smooth is None:
             pass
+        elif config.pm1006_smooth is False:
+            pass
         elif last_pmvt is None:
             (pmvt, last_pmvt) = (pmvt, pmvt)
         elif pmvt is None:
             (pmvt, last_pmvt) = (last_pmvt, pmvt)
         elif callable(config.pm1006_smooth):
             (pmvt, last_pmvt) = (config.pm1006_smooth(pmvt, last_pmvt), pmvt)
+        elif config.pm1006_smooth is True: # mean
+            (pmvt, last_pmvt) = ((pmvt + last_pmvt) / 2.0, pmvt)
         else: # exponential smoothing
             assert (config.pm1006_smooth >= 0 and config.pm1006_smooth < 1)
-            (pmvt, last_pmvt) = ((1 - config.pm1006_smooth) * pmvt + config.pm1006_smooth * last_pmvt, pmvt)
+            pmvt = (1 - config.pm1006_smooth) * pmvt + config.pm1006_smooth * last_pmvt
+            last_pmvt = pmvt
 
         if pmvt is None:
             continue
