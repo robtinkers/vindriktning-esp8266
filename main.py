@@ -7,6 +7,8 @@ from pm1006 import PM1006
 import config
 print()
 
+VNOTFOUND = const(-1)
+
 # Extend the basic UMQTT client with a couple of helpers to keep our own code cleaner
 class MQTTClient(simple.MQTTClient):
 
@@ -93,14 +95,14 @@ while True:
             readings.append(None)
         else:
             vnow = None
-            readings.append(-1)
+            readings.append(VNOTFOUND)
 
         readings = readings[-120:] # we get a fresh batch of readings every ~30 seconds, so always keep one hour
 
         ## CALCULATE OTHER VALUES
 
         v90s = readings[-3:] # no .copy() needed; this is 3 batches (so median will filter out one extreme batch)
-        v90s = [v for v in v90s if v != -1] # drop any negative values used as padding
+        v90s = [v for v in v90s if v != VNOTFOUND] # drop any negative values used as padding
         if len(v90s):
             v90s.sort()
             v90s = v90s[len(v90s)//2] # median (of medians)
@@ -108,7 +110,7 @@ while True:
             v90s = None
 
         v05m = readings[-10:] # no .copy() needed; this is 10 batches (~5 minutes)
-        v05m = [v for v in v05m if v != -1] # drop any negative values used as padding
+        v05m = [v for v in v05m if v != VNOTFOUND] # drop any negative values used as padding
         if len(v05m):
             v05m.sort()
             v05m = v05m[len(v05m)//2] # median (of medians)
@@ -116,7 +118,7 @@ while True:
             v05m = None
 
         v60m = readings.copy()
-        v60m = [v for v in v60m if v != -1] # drop any negative values used as padding
+        v60m = [v for v in v60m if v != VNOTFOUND] # drop any negative values used as padding
         if len(v60m):
             v60m.sort()
             v60m = sum(v60m) / len(v60m) # mean (of medians)
