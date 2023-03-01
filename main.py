@@ -11,6 +11,7 @@ VNOTFOUND = const(-1)
 
 # Extend the basic UMQTT client with a couple of helpers to keep our own code cleaner
 class MQTTClient(simple.MQTTClient):
+    #TODO: use .sock.state instead of stomping on .sock
 
     def isconnected(self):
         return bool(self.sock is not None)
@@ -33,8 +34,8 @@ def wlan_connect():
                 return True
 
 # Start with local logging
-log = usyslog.SyslogClient(config.syslog_address)
-log.openlog('vindriktning', usyslog.LOG_PERROR|usyslog.LOG_CONS, usyslog.LOG_CONSOLE, config.machine_id)
+log = usyslog.Handler(config.syslog_address, usyslog.LOG_CONSOLE,
+                      hostname=config.machine_id, ident='vindriktning', option=usyslog.LOG_PERROR|usyslog.LOG_CONS)
 
 # Connect to the network
 network.WLAN(network.AP_IF).active(False)
@@ -45,7 +46,7 @@ except Exception as e:
     log.critical('Exception %s:%s while connecting to network' % (type(e).__name__, e.args))
 
 # Switch to remote logging
-log.openlog('vindriktning', usyslog.LOG_PERROR|usyslog.LOG_CONS, usyslog.LOG_DAEMON, config.machine_id)
+log.openlog(None, None, usyslog.LOG_DAEMON)
 log.info('Started')
 
 # Set up the PM1006 sensor
