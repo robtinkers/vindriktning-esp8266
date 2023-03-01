@@ -132,7 +132,7 @@ def _update_state(state, **kwargs):
             pass
         elif k == 'address':
             global _address, _info, _sock
-            _address = _state['address']
+            _address = kwargs['address']
             _info = None
             _sock = None
         else:
@@ -145,12 +145,15 @@ def conf(**kwargs):
 def openlog(ident=None, option=None, facility=None):
     conf(ident=ident, option=option, facility=facility)
 
-def closelog():
+def _close():
     global _sock, _info
     try: _sock.close()
     except: pass
     _sock = None
     _info = None
+
+def closelog():
+    _close()
     openlog(ident='-', option=0, facility=LOG_USER)
 
 # EXTENSION: redirect "stderr" so that LOG_PERROR logs to a file instead of the console
@@ -160,14 +163,14 @@ def setstderr(fh):
 
 def setlogmask(mask):
     omask = state['logmask']
-    if mask != 0: # as per the C api
-        _state['logmask'] = int(mask) # raises exception if mask isn't an int
+    if mask is not None and mask != 0: # as per the C api
+        _state['logmask'] = mask
     return omask
 
 def setconmask(mask):
     omask = state['conmask']
-    if mask != 0: # as per the C api
-        _state['conmask'] = int(mask) # raises exception if mask isn't an int
+    if mask is not None and mask != 0: # as per the C api
+        _state['conmask'] = mask
     return omask
 
 def _syslog4(state, facility, priority, msg):
@@ -177,12 +180,9 @@ def _syslog4(state, facility, priority, msg):
     ident = '-' if state['ident'] == '' else (str(state['ident']).replace(' ','_')+':') # EXTENSION: that .replace()
     facility = int(state['facility']) if facility == 0 else int(facility)
     option = int(state['option'])
-    logmask = int(state['logmask'])
+#    logmask = int(state['logmask']) # must be checked by caller
     conmask = int(state['conmask'])
     stderr = state['stderr']
-
-    if priority & logmask:
-        return
 
     # EXTENSION: automatically send LOG_CONSOLE and some priorities to console
     if facility == LOG_CONSOLE or (priority & conmask == 0) or (option & LOG_PERROR and stderr is None):
@@ -229,47 +229,68 @@ def _syslog4(state, facility, priority, msg):
 
 # FEATURE: pri is optional in CPython, but required here
 def syslog(pri, msg):
-    _syslog4(_state, (pri & ~0x07), (pri &  0x07), msg)
+    facility = (pri & ~0x07)
+    priority = (pri &  0x07)
+
+    logmask = int(state['logmask'])
+    if priority & logmask:
+        return
+
+    _syslog4(_state, facility, priority, msg)
 
 #### Implement (part of) the SysLogHandler API ...
 
+#FEATURE: level values are not the SysLogHandler defaults, and are ordered the other way around
+CRITICAL = const(LOG_CRIT)
+ERROR = const(LOG_ERR)
+WARNING = const(LOG_WARNING)
+NOTICE = const(LOG_NOTICE) # EXTENSION: NOTICE isn't a default LogHandler level
+INFO = const(LOG_INFO)
+DEBUG = const(LOG_DEBUG)
+NOTSET = const(LOG_DEBUG+1)
+
 class Handler():
 
+    _level = WARNING
+
     # FEATURE: constructor doesn't take a socktype argument, and we only support UDP network traffic
-    # EXTENSION: can set the ident per Handler() as well as the facility
+    # EXTENSION: can configure almost everything per Handler() rather than just the facility
     def __init__(self, address=None, facility=None, **kwargs):
         self._state = _state.copy()
         _update_state(self._state, address=address, facility=facility)
         _update_state(self._state, **kwargs)
 
-    def close(self):
-        closelog()
+    def setLevel(self, level):
+        self._level = int(level) # raises an exception if level isn't an int
 
-    def _log(self, priority, msg, *args):
+    def close(self):
+        _close()
+
+    def log(self, priority, msg, *args):
+        if priority > self._level:
+            return
         if args:
             msg = msg % args
         _syslog4(self._state, 0, priority, msg)
 
     def critical(self, msg, *args):
-        self._log(LOG_CRIT, msg, *args)
+        self.log(CRITICAL, msg, *args)
 
     def error(self, msg, *args):
-        self._log(LOG_ERR, msg, *args)
+        self.log(ERROR, msg, *args)
 
     def warning(self, msg, *args):
-        self._log(LOG_WARNING, msg, *args)
+        self.log(WARNING, msg, *args)
 
-    # EXTENSION: not in the SysLogHandler API (because NOTICE isn't a default LogHandler level)
+    # EXTENSION: NOTICE isn't a default LogHandler level
     def notice(self, msg, *args):
-        self._log(LOG_NOTICE, msg, *args)
+        self.log(NOTICE, msg, *args)
 
     def info(self, msg, *args):
-        self._log(LOG_INFO, msg, *args)
+        self.log(INFO, msg, *args)
 
     def debug(self, msg, *args):
-        self._log(LOG_DEBUG, msg, *args)
-
-
+        self.log(DEBUG, msg, *args)
 
 """
 # Not happy with this yet
@@ -297,5 +318,5 @@ class Handler():
     EXCEPTION_PRIORITY = LOG_ERR
 
     def exception(self, msg, *args, exc_info=True):
-        self._log(self.EXCEPTION_PRIORITY, msg, *args, exc_info=exc_info)
+        self.log(self.EXCEPTION_PRIORITY, msg, *args, exc_info=exc_info)
 """
