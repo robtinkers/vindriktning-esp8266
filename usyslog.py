@@ -1,9 +1,6 @@
 """
-A partial implementation of CPython's syslog wrapper and SysLogHandler APIs, for micropython.
-
-Timestamps and unicode are not supported, but there are a few handy extensions.
-
-Remember it's not a bug if it's documented, it's a feature!
+An micropython implementation of CPython's syslog wrapper and SysLogHandler APIs,
+with a few handy extensions. Remember that if it's documented, it's a feature!
 
 References:
     https://www.rfc-editor.org/rfc/rfc5424
@@ -32,7 +29,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-# heap size increased by 5056 bytes on ESP8266, as reported by
+# heap size increased by 5152 bytes on ESP8266, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.Handler() ; gc.collect() ; gc.mem_alloc()
 
 from micropython import const
@@ -105,13 +102,11 @@ _priorityprefixes = (
     '[debug] ',		# [7]
 )
 
+_EXCEPTION_PRIORITY = const(LOG_ERR)
+
 ################
 
 #### Implement (most of) the syslog wrapper API ...
-
-# monkey patch this if you want timestamps
-def _timestamp():
-    return '-'
 
 _state = {
     'hostname': '-',
@@ -120,7 +115,8 @@ _state = {
     'facility': LOG_USER,
     'logmask': 0, # note that the mask configures what is *ignored*
     'conmask': ~(LOG_EMERG|LOG_ALERT), # intentionally, the priorities not used by the Handler
-    'perror': sys.stderr
+    'perror': sys.stderr,
+    'timestamp': '-' # either a fixed string, or a callable function such as time.gmtime
 }
 
 # these are shared so that this module can only ever use one socket
@@ -142,7 +138,7 @@ def _update_state(state, **kwargs):
             state[k] = kwargs[k]
 
 # EXTENSION: syslog.conf()
-def conf(**kwargs): # currently the only way to set 'address' 'hostname' 'perror' 'conmask' in the basic API
+def conf(**kwargs): # currently the only way to set 'address' 'hostname' 'conmask' 'perror' 'timestamp' in the basic API
     _update_state(_state, **kwargs)
 
 def setlogmask(mask):
@@ -183,6 +179,7 @@ def _syslog4(state, facility, priority, msg):
 #    logmask = int(state['logmask']) # must be tested by caller
     conmask = int(state['conmask'])
     perror = state['perror']
+    timestamp = state['timestamp'] # sanity-checked later
 
     if option & LOG_PERROR:
         perror.write((msg+"\n").encode('utf-8')) # caller must handle any exceptions
@@ -203,7 +200,7 @@ def _syslog4(state, facility, priority, msg):
                 _info = usocket.getaddrinfo(_address, SYSLOG_UDP_PORT)[0][-1]
         except:
             if option & LOG_CONS:
-                print(_priorityprefixes[LOG_CRIT] + "syslog: Exception in getaddrinfo(%s)" % (repr(_address),))
+                print(_priorityprefixes[_EXCEPTION_PRIORITY] + "syslog: Exception in getaddrinfo(%s)" % (repr(_address),))
             return
 
     if _sock is None:
@@ -211,17 +208,24 @@ def _syslog4(state, facility, priority, msg):
             _sock = usocket.socket(usocket.AF_INET, usocket.SOCK_DGRAM)
         except:
             if option & LOG_CONS:
-                print(_priorityprefixes[LOG_CRIT] + "syslog: Exception in socket(AF_INET,SOCK_DGRAM)")
+                print(_priorityprefixes[_EXCEPTION_PRIORITY] + "syslog: Exception in socket(AF_INET,SOCK_DGRAM)")
             return
 
-    data = "<%d>1 %s %s %s - - - %s" % (facility|priority, _timestamp(), hostname, ident, msg)
+    if timestamp == '':
+        timestamp = '-'
+    elif callable(timestamp):
+        t = timestamp() # function must not throw an exception
+        timestamp = '%04d-%02d-%02dT%02d:%02d:%02dZ' % (t[0], t[1], t[2], t[3], t[4], t[5])
+        del t
+
+    data = "<%d>1 %s %s %s - - - %s" % (facility|priority, timestamp, hostname, ident, msg)
     data = data.encode('utf-8')
 
     try:
         _sock.sendto(data, _info)
     except:
         if option & LOG_CONS:
-            print(_priorityprefixes[LOG_CRIT] + "syslog: Exception in sendto()")
+            print(_priorityprefixes[_EXCEPTION_PRIORITY] + "syslog: Exception in sendto()")
         # throw away the socket and get a new one next time
         try: _sock.close()
         except: pass
