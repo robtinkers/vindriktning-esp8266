@@ -36,8 +36,8 @@ from micropython import const
 import sys, usocket
 
 #### syslog facility constants
-# Pre-shifting is unconventional, but simpler to use and also how the CPython syslog wrapper does it.
 
+# pre-shifting is unconventional, but simpler to use and also how the CPython syslog wrapper does it.
 LOG_KERN = const(0 << 3)
 LOG_USER = const(1 << 3)
 LOG_MAIL = const(2 << 3)
@@ -53,7 +53,7 @@ LOG_AUTHPRIV = const(10 << 3)
 #LOG_FTP = const(11 << 3)
 #LOG_NTP = const(12 << 3)
 #LOG_AUDIT = const(13 << 3)
-LOG_CONSOLE = const(14 << 3) #EXTENSION: always print to the console and never send over the network
+LOG_CONSOLE = const(14 << 3) #EXTENSION: print to the console and never send over the network
 #LOG_CLOCK = const(15 << 3)
 LOG_LOCAL0 = const(16 << 3)
 LOG_LOCAL1 = const(17 << 3)
@@ -75,7 +75,7 @@ LOG_NOTICE = const(5)
 LOG_INFO = const(6)
 LOG_DEBUG = const(7)
 
-#### option constants (combine with bitwise or)
+#### syslog option constants (combine with bitwise or)
 
 LOG_PID = const(0x01) # NOP
 LOG_CONS = const(0x02) # "Write directly to the system console if there is an error while sending to the system logger."
@@ -104,9 +104,7 @@ _severityprefixes = (
 
 _INTERNAL_EXCEPTION_SEVERITY = const(LOG_ERR)
 
-################
-
-#### Implement (most of) the syslog wrapper API ...
+######## Implement (most of) the syslog wrapper API ...
 
 # if you really don't want to import sys just for sys.stderr
 # then you could use this class and set 'perror': _stdout
@@ -189,13 +187,18 @@ def _syslog4(state, facility, severity, msg):
     facility = int(state['facility'] if facility == 0 else facility)
     severity = int(severity)
     option = int(state['option'])
-#    logmask = int(state['logmask']) # must be tested by caller
+#    logmask = int(state['logmask']) # not used in this method, must be checked by caller
     conmask = int(state['conmask'])
     perror = state['perror']
     timestamp = state['timestamp'] # sanity-checked later
 
     if option & LOG_PERROR:
-        perror.write((_severityprefixes[severity] + msg + "\n").encode('utf-8')) # caller must handle any exceptions
+        try:
+            perror.write((_severityprefixes[severity] + msg + "\n").encode('utf-8'))
+        except:
+            if option & LOG_CONS:
+                print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in perror.write() callback")
+            pass
 
     #EXTENSION: automatically send LOG_CONSOLE and some severities to console
     if facility == LOG_CONSOLE or (severity & conmask == 0):
@@ -225,8 +228,13 @@ def _syslog4(state, facility, severity, msg):
             return
 
     if callable(timestamp):
-        timestamp = timestamp() # function must not throw an exception
-    if timestamp == '':
+        try:
+            timestamp = timestamp()
+        except:
+            if option & LOG_CONS:
+                print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in timestamp() callback")
+            timestamp = None
+    if timestamp == '' or timestamp is None:
         timestamp = '-'
 
     data = "<%d>1 %s %s %s - - - %s" % (facility|severity, timestamp, hostname, ident, msg)
@@ -253,10 +261,11 @@ def syslog(pri, msg):
 
     _syslog4(_state, facility, severity, msg)
 
-#### Implement (part of) the SysLogHandler API ...
-# hopefully, just enough to be useful
+######## Implement (part of) the SysLogHandler API, hopefully just enough to be useful ...
 
-#FEATURE: level values are not the LogHandler defaults, and are ordered the other way around
+#### LogHandler level constants
+
+#FEATURE: these are not the LogHandler defaults, and are ordered the other way around
 CRITICAL = const(LOG_CRIT)
 ERROR = const(LOG_ERR)
 WARNING = const(LOG_WARNING)
@@ -264,6 +273,8 @@ NOTICE = const(LOG_NOTICE) #EXTENSION: NOTICE isn't a default LogHandler level
 INFO = const(LOG_INFO)
 DEBUG = const(LOG_DEBUG)
 NOTSET = const(LOG_DEBUG+1)
+
+#### more constants
 
 _EXCEPTION_LEVEL = const(ERROR)
 _EXCEPTION_FORMAT = '%s: %s'
@@ -316,7 +327,7 @@ class Handler():
     def debug(self, msg, *args):
         self.log(DEBUG, msg, *args)
 
-    # the default API is not great, but we have to support it for compatibility
+    # the default API is not good, but we have to support it for compatibility
     # but we also add a couple of extensions, allowing us to do stuff like
     #   log.exception(e, ' in some_function(%s,%s)', arg1, arg2)    # everything in one log entry
     #   log.exception('some_function(%s,%s) failed', arg1, arg2, e) # no named argument for the simple case
