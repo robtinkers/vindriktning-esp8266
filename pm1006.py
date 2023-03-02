@@ -43,7 +43,7 @@ class PM1006:
     def read_raw(self):
         self._log.debug('Waiting for UART')
         noreadcounter = 0
-        while True: # TODO: timer argument to break out of this
+        while True: #TODO: timer argument to break out of this
             try:
                 data = self._uart.read()
             except Exception as e:
@@ -64,7 +64,7 @@ class PM1006:
                 self._log.warning('Partial frame at %d, ignoring reading' % (offset,))
                 break
             if data[offset+0] != 22 or data[offset+1] != 17 or data[offset+2] != 11:
-                # TODO: probably missed a symbol; in theory, we could resync on magic
+                # probably missed a symbol; in theory, we could resync on magic
                 self._log.warning('Bad magic at %d, ignoring reading' % (offset,))
                 continue # or break?
             if sum(data[offset:offset+20]) % 256 != 0:

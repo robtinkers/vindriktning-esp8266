@@ -5,7 +5,7 @@ from ubinascii import hexlify
 
 print()
 machine_id = hexlify(unique_id()).decode()
-print('MACHINE_ID = %s' % machine_id)
+print('MACHINE_ID = ' + machine_id)
 
 wifi_network        = 'My-WiFi'
 wifi_password       = 'My-Pass'

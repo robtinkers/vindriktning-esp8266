@@ -1,6 +1,6 @@
 import network, sys, time
 import random
-from umqtt import simple # TODO: investigate umqtt.robust
+from umqtt import simple #TODO: investigate umqtt.robust
 import usyslog
 from pm1006 import PM1006
 
@@ -30,7 +30,7 @@ def wlan_connect():
         for i in range(0, 10):
             time.sleep(1)
             if wlan.isconnected():
-                time.sleep(5) # TODO: check if this is actually necessary
+                time.sleep(5) #TODO: check if this is actually necessary
                 return True
 
 # Start with local logging
@@ -187,17 +187,15 @@ while True:
         ## PUBLISH
 
         if config.mqtt_topic_pmvt is not None:
-
-                log.info('Publishing %s' % (repr((config.mqtt_topic_pmvt, pmvt))))
-                try:
-                    mqtt.publish(config.mqtt_topic_pmvt, '%.2f' % (pmvt,), retain=True)
-                    log.debug('Publish success!')
-                except:
-                    log.exception(e, ' while publishing (%d seconds since last success)', time.time() - mqtt_last_success)
+            log.info('Publishing %s' % (repr((config.mqtt_topic_pmvt, pmvt))))
+            try:
+                mqtt.publish(config.mqtt_topic_pmvt, '%.2f' % (pmvt,), retain=True)
+                log.debug('Publish success!')
+            except:
+                log.exception(e, ' while publishing (%d seconds since last success)', time.time() - mqtt_last_success)
 
         log.debug('Disconnecting from broker')
         mqtt.disconnect()
 
     except Exception as e:
         log.exception('UNHANDLED EXCEPTION', e)
-#        raise e

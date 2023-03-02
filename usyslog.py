@@ -2,6 +2,8 @@
 An micropython implementation of CPython's syslog wrapper and SysLogHandler APIs,
 with a few handy extensions. Remember that if it's documented, it's a feature!
 
+The only network transport is UDP because of the lower overhead on small devices.
+
 References:
     https://www.rfc-editor.org/rfc/rfc5424
     https://docs.python.org/3/library/syslog.html
@@ -9,7 +11,7 @@ References:
     https://docs.python.org/3/library/logging.handlers.html#sysloghandler
     https://en.wikipedia.org/wiki/MIT_License
 
-Copyright (c) 2022 "robtinkers"
+Copyright (c) 2022 'robtinkers'
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -29,7 +31,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-# heap size increased by 5440 bytes on ESP8266, as reported by
+# heap size increased by 5520 bytes on ESP8266, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.Handler() ; gc.collect() ; gc.mem_alloc()
 
 from micropython import const
@@ -102,7 +104,7 @@ _severityprefixes = (
     '[debug] ',		# [7]
 )
 
-_INTERNAL_EXCEPTION_SEVERITY = const(LOG_ERR)
+_INTERNAL_ERROR_SEVERITY = const(LOG_ERR)
 
 ######## Implement (most of) the syslog wrapper API ...
 
@@ -113,6 +115,10 @@ _INTERNAL_EXCEPTION_SEVERITY = const(LOG_ERR)
 #    def write(cls, msg):
 #        print(msg.decode('utf-8'), end='')
 
+# this is the state shared between all (non-Handler) calls to this module
+# public methods typically bundle this with their own arguments and pass to a private method
+# each Handler object maintains its own seperate state that it passes to the same private methods
+# note that the default settings for each Handler are a copy of this state when it is instantiated
 _state = {
     'hostname': '-',
     'ident': '-',
@@ -136,6 +142,8 @@ def gmtimestamp():
     t = time.gmtime()
     return '%04d-%02d-%02dT%02d:%02d:%02dZ' % (t[0], t[1], t[2], t[3], t[4], t[5])
 
+# note that if any value is None, then the associated state key will not be updated
+# this allows us to pass in a method's named arguments with minimal processing
 def _update_state(state, **kwargs):
     for k in kwargs:
         if kwargs[k] is None:
@@ -158,6 +166,7 @@ def setlogmask(mask):
         _state['logmask'] = mask
     return omask
 
+#EXTENSION:
 #def setconmask(mask):
 #    omask = state['conmask']
 #    if mask is not None and mask != 0: # copy setlogmask()'s API
@@ -179,6 +188,10 @@ def closelog():
     openlog(ident='-', option=0, facility=LOG_USER)
     #TODO: what about logmask (and conmask)? perror?
 
+def _log_internal_error(option, msg):
+    if option & LOG_CONS:
+        print(_severityprefixes[_INTERNAL_ERROR_SEVERITY] + 'syslog: ' + msg)
+
 def _syslog4(state, facility, severity, msg):
     global _info, _sock
 
@@ -194,10 +207,9 @@ def _syslog4(state, facility, severity, msg):
 
     if option & LOG_PERROR:
         try:
-            perror.write((_severityprefixes[severity] + msg + "\n").encode('utf-8'))
+            perror.write((_severityprefixes[severity] + msg + '\n').encode('utf-8'))
         except:
-            if option & LOG_CONS:
-                print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in perror.write() callback")
+            _log_internal_error(option, 'Exception in perror.write() callback')
             pass
 
     #EXTENSION: automatically send LOG_CONSOLE and some severities to console
@@ -215,36 +227,35 @@ def _syslog4(state, facility, severity, msg):
             else:
                 _info = usocket.getaddrinfo(_address, SYSLOG_UDP_PORT)[0][-1]
         except:
-            if option & LOG_CONS:
-                print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in getaddrinfo(%s)" % (repr(_address),))
+            _log_internal_error(option, 'Exception in getaddrinfo()')
             return
 
     if _sock is None:
         try:
             _sock = usocket.socket(usocket.AF_INET, usocket.SOCK_DGRAM)
         except:
-            if option & LOG_CONS:
-                print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in socket(AF_INET,SOCK_DGRAM)")
+            _log_internal_error(option, 'Exception in socket(AF_INET,SOCK_DGRAM)')
             return
 
     if callable(timestamp):
         try:
             timestamp = timestamp()
+            if int(timestamp[0:4]) < 2023: #TODO: keep updated! or just check <= 1970 to make sure the unix epoch isn't leaking
+                timestamp = None
         except:
-            if option & LOG_CONS:
-                print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in timestamp() callback")
+# all code has a space overhead, so we disable this as there is a clean recovery option
+#            _log_internal_error(option, 'Exception in timestamp() callback')
             timestamp = None
     if timestamp == '' or timestamp is None:
         timestamp = '-'
 
-    data = "<%d>1 %s %s %s - - - %s" % (facility|severity, timestamp, hostname, ident, msg)
+    data = '<%d>1 %s %s %s - - - %s' % (facility|severity, timestamp, hostname, ident, msg)
     data = data.encode('utf-8')
 
     try:
         _sock.sendto(data, _info)
     except:
-        if option & LOG_CONS:
-            print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in sendto()")
+        _log_internal_error(option, 'Exception in sendto()')
         # throw away the socket and get a new one next time
         try: _sock.close()
         except: pass
@@ -261,7 +272,7 @@ def syslog(pri, msg):
 
     _syslog4(_state, facility, severity, msg)
 
-######## Implement (part of) the SysLogHandler API, hopefully just enough to be useful ...
+######## Implement (part of) the LogHandler API, hopefully just enough to be useful ...
 
 #### LogHandler level constants
 
@@ -276,56 +287,62 @@ NOTSET = const(LOG_DEBUG+1)
 
 #### more constants
 
+_DEFAULT_LEVEL = const(WARNING)
 _EXCEPTION_LEVEL = const(ERROR)
-_EXCEPTION_FORMAT = '%s: %s'
+_EXCEPTION_FORMAT = '%s: %s' # the same as Python's default
 
 class Handler():
 
-    #FEATURE: constructor doesn't take a socktype argument, and we only support UDP network traffic
+    #FEATURE: constructor doesn't take a socktype argument, and we only support UDP network traffic anyway
     #EXTENSION: can configure more syslog values per Handler() not just the facility
     def __init__(self, address=None, facility=None, **kwargs):
         self._state = _state.copy()
-        _update_state(self._state, address=address, facility=facility, level=WARNING)
+        _update_state(self._state, address=address, facility=facility, level=_DEFAULT_LEVEL)
         _update_state(self._state, **kwargs)
 
-    #EXTENSION
+    #EXTENSION: most useful to switch between LOG_CONSOLE and LOG_SOMETHINGELSE
     def setFacility(self, facility):
-        if facility is not None:
-            self._state['facility'] = facility
+        _update_state(self._state, facility=facility)
 
     def setLevel(self, level):
-        if level is not None:
-            self._state['level'] = level
+        _update_state(self._state, level=level)
 
     def close(self):
         _close()
 
-    def _log(self, level, msg, *args):
+    def log(self, level, msg, *args):
         if level > self._state['level']:
             return
         _syslog4(self._state, 0, level, msg % args)
 
-    def log(self, level, msg, *args):
-        self._log(level, msg, *args)
+#### could split into a seperate sub-class here
 
-    def critical(self, msg, *args):
-        self.log(CRITICAL, msg, *args)
+    def debug(self, msg, *args):
+        self.log(DEBUG, msg, *args)
 
-    def error(self, msg, *args):
-        self.log(ERROR, msg, *args)
-
-    def warning(self, msg, *args):
-        self.log(WARNING, msg, *args)
+    def info(self, msg, *args):
+        self.log(INFO, msg, *args)
 
     #EXTENSION: NOTICE isn't a default LogHandler level
     def notice(self, msg, *args):
         self.log(NOTICE, msg, *args)
 
-    def info(self, msg, *args):
-        self.log(INFO, msg, *args)
+    def warning(self, msg, *args):
+        self.log(WARNING, msg, *args)
 
-    def debug(self, msg, *args):
-        self.log(DEBUG, msg, *args)
+    def error(self, msg, *args):
+        self.log(ERROR, msg, *args)
+
+    def critical(self, msg, *args):
+        self.log(CRITICAL, msg, *args)
+
+#    def alert(self, msg, *args):
+#        self.log(LOG_ALERT, msg, *args)
+#
+#    def emerg(self, msg, *args):
+#        self.log(LOG_EMERG, msg, *args)
+
+#### could split into a seperate sub-class here
 
     # the default API is not good, but we have to support it for compatibility
     # but we also add a couple of extensions, allowing us to do stuff like
@@ -362,3 +379,4 @@ class Handler():
         self.log(_EXCEPTION_LEVEL, msg, *args)
         if exc is not False:
             self.log(_EXCEPTION_LEVEL, _EXCEPTION_FORMAT, exc.__class__.__name__, repr(exc.value))
+
