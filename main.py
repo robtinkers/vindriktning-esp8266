@@ -44,7 +44,7 @@ wlan = network.WLAN(network.STA_IF)
 try:
     wlan_connect()
 except Exception as e:
-    log.critical('Exception %s:%s while connecting to network' % (type(e).__name__, e.args))
+    log.exception(e, ' while connecting to network')
 
 # Switch to remote logging
 log.setFacility(usyslog.LOG_DAEMON)
@@ -168,7 +168,7 @@ while True:
                 wlan_connect()
                 log.debug('Connected to network %s' % (repr(wlan.ifconfig()),))
             except Exception as e:
-                log.critical('Exception %s:%s while connecting to network' % (type(e).__name__, e.args))
+                log.exception(e, ' while connecting to network')
         else:
             log.debug('Already connected to network (wlan.status=%s)' % (repr(wlan.status()),))
 
@@ -181,7 +181,7 @@ while True:
                 mqtt.connect() # default is clean_session=True
                 log.debug('Connected to broker %s' % (repr(mqtt.sock),))
             except Exception as e:
-                log.critical('Exception %s:%s while connecting to broker' % (type(e).__name__, e.args))
+                log.exception(e, ' while connecting to broker')
                 continue
 
         ## PUBLISH
@@ -193,11 +193,11 @@ while True:
                     mqtt.publish(config.mqtt_topic_pmvt, '%.2f' % (pmvt,), retain=True)
                     log.debug('Publish success!')
                 except:
-                    log.critical('Exception %s:%s while publishing (%d seconds since last success)' % (type(e).__name__, e.args, time.time() - mqtt_last_success))
+                    log.exception(e, ' while publishing (%d seconds since last success)', time.time() - mqtt_last_success)
 
         log.debug('Disconnecting from broker')
         mqtt.disconnect()
 
     except Exception as e:
-        log.critical('UNHANDLED EXCEPTION %s:%s' % (type(e).__name__, e.args))
+        log.exception('UNHANDLED EXCEPTION', e)
 #        raise e

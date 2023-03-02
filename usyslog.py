@@ -29,7 +29,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-# heap size increased by 5264 bytes on ESP8266, as reported by
+# heap size increased by 5440 bytes on ESP8266, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.Handler() ; gc.collect() ; gc.mem_alloc()
 
 from micropython import const
@@ -53,7 +53,7 @@ LOG_AUTHPRIV = const(10 << 3)
 #LOG_FTP = const(11 << 3)
 #LOG_NTP = const(12 << 3)
 #LOG_AUDIT = const(13 << 3)
-LOG_CONSOLE = const(14 << 3) # EXTENSION: always print to the console and never send over the network
+LOG_CONSOLE = const(14 << 3) #EXTENSION: always print to the console and never send over the network
 #LOG_CLOCK = const(15 << 3)
 LOG_LOCAL0 = const(16 << 3)
 LOG_LOCAL1 = const(17 << 3)
@@ -150,7 +150,7 @@ def _update_state(state, **kwargs):
         else:
             state[k] = kwargs[k]
 
-# EXTENSION: syslog.conf()
+#EXTENSION: syslog.conf()
 def conf(**kwargs): # currently the only way to set 'address' 'hostname' 'conmask' 'perror' 'timestamp' in the basic API
     _update_state(_state, **kwargs)
 
@@ -185,7 +185,7 @@ def _syslog4(state, facility, severity, msg):
     global _info, _sock
 
     hostname = '-' if state['hostname'] == '' else str(state['hostname'])
-    ident = '-' if state['ident'] == '' else (str(state['ident']).replace(' ','_')+':') # EXTENSION: that .replace()
+    ident = '-' if state['ident'] == '' else (str(state['ident']).replace(' ','_')+':') #EXTENSION: that .replace()
     facility = int(state['facility'] if facility == 0 else facility)
     severity = int(severity)
     option = int(state['option'])
@@ -197,7 +197,7 @@ def _syslog4(state, facility, severity, msg):
     if option & LOG_PERROR:
         perror.write((_severityprefixes[severity] + msg + "\n").encode('utf-8')) # caller must handle any exceptions
 
-    # EXTENSION: automatically send LOG_CONSOLE and some severities to console
+    #EXTENSION: automatically send LOG_CONSOLE and some severities to console
     if facility == LOG_CONSOLE or (severity & conmask == 0):
         print(_severityprefixes[severity] + msg)
 
@@ -206,7 +206,7 @@ def _syslog4(state, facility, severity, msg):
 
     if _info is None:
         try:
-            # EXTENSION: tuple not required, can just use a string and assume the port number
+            #EXTENSION: tuple not required, can just use a string and assume the port number
             if isinstance(_address, tuple):
                 _info = usocket.getaddrinfo(_address[0], _address[1])[0][-1]
             else:
@@ -242,7 +242,7 @@ def _syslog4(state, facility, severity, msg):
         except: pass
         _sock = None
 
-# FEATURE: pri is optional in CPython, but required here
+#FEATURE: pri is optional in CPython, but required here
 def syslog(pri, msg):
     facility = (pri & ~0x07)
     severity = (pri &  0x07)
@@ -260,23 +260,24 @@ def syslog(pri, msg):
 CRITICAL = const(LOG_CRIT)
 ERROR = const(LOG_ERR)
 WARNING = const(LOG_WARNING)
-NOTICE = const(LOG_NOTICE) # EXTENSION: NOTICE isn't a default LogHandler level
+NOTICE = const(LOG_NOTICE) #EXTENSION: NOTICE isn't a default LogHandler level
 INFO = const(LOG_INFO)
 DEBUG = const(LOG_DEBUG)
 NOTSET = const(LOG_DEBUG+1)
 
 _EXCEPTION_LEVEL = const(ERROR)
+_EXCEPTION_FORMAT = '%s: %s'
 
 class Handler():
 
-    # FEATURE: constructor doesn't take a socktype argument, and we only support UDP network traffic
-    # EXTENSION: can configure more syslog values per Handler() not just the facility
+    #FEATURE: constructor doesn't take a socktype argument, and we only support UDP network traffic
+    #EXTENSION: can configure more syslog values per Handler() not just the facility
     def __init__(self, address=None, facility=None, **kwargs):
         self._state = _state.copy()
         _update_state(self._state, address=address, facility=facility, level=WARNING)
         _update_state(self._state, **kwargs)
 
-    # EXTENSION
+    #EXTENSION
     def setFacility(self, facility):
         if facility is not None:
             self._state['facility'] = facility
@@ -288,14 +289,10 @@ class Handler():
     def close(self):
         _close()
 
-    def _log(self, level, msg, *args, exc=None):
+    def _log(self, level, msg, *args):
         if level > self._state['level']:
             return
-        if args:
-            msg = msg % args
-        _syslog4(self._state, 0, level, msg)
-        if isinstance(exc, BaseException):
-            _syslog4(self._state, 0, level, '%s: %s' % (exc.__class__.__name__, repr(exc.value)))
+        _syslog4(self._state, 0, level, msg % args)
 
     def log(self, level, msg, *args):
         self._log(level, msg, *args)
@@ -309,7 +306,7 @@ class Handler():
     def warning(self, msg, *args):
         self.log(WARNING, msg, *args)
 
-    # EXTENSION: NOTICE isn't a default LogHandler level
+    #EXTENSION: NOTICE isn't a default LogHandler level
     def notice(self, msg, *args):
         self.log(NOTICE, msg, *args)
 
@@ -319,5 +316,38 @@ class Handler():
     def debug(self, msg, *args):
         self.log(DEBUG, msg, *args)
 
-    def exception(self, msg, *args, exc=None):
-        self._log(_EXCEPTION_LEVEL, msg, *args, exc=exc)
+    # the default API is not great, but we have to support it for compatibility
+    # but we also add a couple of extensions, allowing us to do stuff like
+    #   log.exception(e, ' in some_function(%s,%s)', arg1, arg2)    # everything in one log entry
+    #   log.exception('some_function(%s,%s) failed', arg1, arg2, e) # no named argument for the simple case
+    def exception(self, msg, *args, **kwargs):
+        exc_info = kwargs.get('exc_info')
+
+        if exc_info is not None: # if 'exc_info' was specified, then proceed as usual
+            if isinstance(exc_info, BaseException):
+                exc = exc_info
+            elif isinstance(exc_info, tuple) and len(exc_info) > 1 and isinstance(exc_info[1], BaseException):
+                exc = exc_info[1]
+            elif exc_info: # 'exc_info' was specified and non-falsey, so default behaviour
+                exc = True
+            else: # 'exc_info' was specified and falsey
+                exc = False
+        elif isinstance(msg, BaseException): #EXTENSION: exception as the first argument (i.e. 'msg') for everything in one log entry
+            if args:
+                self.log(_EXCEPTION_LEVEL, _EXCEPTION_FORMAT + args[0], *((msg.__class__.__name__, repr(msg.value)) + args[1:]))
+            else:
+                self.log(_EXCEPTION_LEVEL, _EXCEPTION_FORMAT, *(msg.__class__.__name__, repr(msg.value)))
+            return
+        elif args and isinstance(args[-1], BaseException): #EXTENSION: exception as the last argument (i.e. no named argument)
+            exc = args[-1]
+            args = args[:-1]
+        else: # 'exc_info' was not specified, so default behaviour
+            exc = True
+
+        if exc is True:
+            try: exc = sys.exc_info()[1] # I don't think this is well supported on micropython
+            except: exc = False
+
+        self.log(_EXCEPTION_LEVEL, msg, *args)
+        if exc is not False:
+            self.log(_EXCEPTION_LEVEL, _EXCEPTION_FORMAT, exc.__class__.__name__, repr(exc.value))
