@@ -29,7 +29,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-# heap size increased by 5152 bytes on ESP8266, as reported by
+# heap size increased by 5264 bytes on ESP8266, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.Handler() ; gc.collect() ; gc.mem_alloc()
 
 from micropython import const
@@ -64,7 +64,7 @@ LOG_LOCAL5 = const(21 << 3)
 LOG_LOCAL6 = const(22 << 3)
 LOG_LOCAL7 = const(23 << 3)
 
-#### syslog priority constants
+#### syslog severity constants
 
 LOG_EMERG = const(0)
 LOG_ALERT = const(1)
@@ -82,7 +82,7 @@ LOG_CONS = const(0x02) # "Write directly to the system console if there is an er
 LOG_ODELAY = const(0x04) # NYI
 LOG_NDELAY = const(0x08) # NYI
 LOG_NOWAIT = const(0x10) # NOP
-LOG_PERROR = const(0x20) # "Also log the message to stderr." [we use the console, rather than stderr]
+LOG_PERROR = const(0x20) # "Also log the message to stderr."
 
 #### more constants
 
@@ -90,7 +90,7 @@ LOG_PERROR = const(0x20) # "Also log the message to stderr." [we use the console
 SYSLOG_UDP_PORT = const(514)
 
 # added at the start of lines printed on the console (or written to a file if using perror redirection)
-_priorityprefixes = (
+_severityprefixes = (
     # order is extremely important because a tuple, not a dict
     '[emergency] ',	# [0]
     '[alert] ',		# [1]
@@ -102,11 +102,18 @@ _priorityprefixes = (
     '[debug] ',		# [7]
 )
 
-_EXCEPTION_PRIORITY = const(LOG_ERR)
+_INTERNAL_EXCEPTION_SEVERITY = const(LOG_CRIT)
 
 ################
 
 #### Implement (most of) the syslog wrapper API ...
+
+# if you really don't want to import sys just for sys.stderr
+# then you could use this class and set 'perror': _stdout
+#class _stdout(object):
+#    @classmethod
+#    def write(cls, msg):
+#        print(msg.decode('utf-8'), end='')
 
 _state = {
     'hostname': '-',
@@ -114,9 +121,9 @@ _state = {
     'option': 0,
     'facility': LOG_USER,
     'logmask': 0, # note that the mask configures what is *ignored*
-    'conmask': ~(LOG_EMERG|LOG_ALERT), # intentionally, the priorities not used by the Handler
-    'perror': sys.stderr,
-    'timestamp': '-' # either a fixed string, or a callable function such as time.gmtime
+    'conmask': ~(LOG_EMERG|LOG_ALERT), # intentionally, the severities not used by the Handler
+    'perror': sys.stderr, # can't be None, disable this feature by clearing the option bit
+    'timestamp': '-' # either a fixed string, or a callable function
 }
 
 # these are shared so that this module can only ever use one socket
@@ -124,6 +131,12 @@ _state = {
 _address = False # magic value, meaning no network logging
 _info = None
 _sock = None
+
+# sample timestamp function. To enable: syslog.conf(timestamp=syslog.gmtimestamp)
+def gmtimestamp():
+    import time
+    t = time.gmtime()
+    return '%04d-%02d-%02dT%02d:%02d:%02dZ' % (t[0], t[1], t[2], t[3], t[4], t[5])
 
 def _update_state(state, **kwargs):
     for k in kwargs:
@@ -168,13 +181,13 @@ def closelog():
     openlog(ident='-', option=0, facility=LOG_USER)
     #TODO: what about logmask (and conmask)? perror?
 
-def _syslog4(state, facility, priority, msg):
+def _syslog4(state, facility, severity, msg):
     global _info, _sock
 
     hostname = '-' if state['hostname'] == '' else str(state['hostname'])
     ident = '-' if state['ident'] == '' else (str(state['ident']).replace(' ','_')+':') # EXTENSION: that .replace()
     facility = int(state['facility'] if facility == 0 else facility)
-    priority = int(priority)
+    severity = int(severity)
     option = int(state['option'])
 #    logmask = int(state['logmask']) # must be tested by caller
     conmask = int(state['conmask'])
@@ -182,11 +195,11 @@ def _syslog4(state, facility, priority, msg):
     timestamp = state['timestamp'] # sanity-checked later
 
     if option & LOG_PERROR:
-        perror.write((msg+"\n").encode('utf-8')) # caller must handle any exceptions
+        perror.write((_severityprefixes[severity] + msg + "\n").encode('utf-8')) # caller must handle any exceptions
 
-    # EXTENSION: automatically send LOG_CONSOLE and some priorities to console
-    if facility == LOG_CONSOLE or (priority & conmask == 0):
-        print(_priorityprefixes[priority] + msg)
+    # EXTENSION: automatically send LOG_CONSOLE and some severities to console
+    if facility == LOG_CONSOLE or (severity & conmask == 0):
+        print(_severityprefixes[severity] + msg)
 
     if facility == LOG_CONSOLE or _address is False:
         return
@@ -200,7 +213,7 @@ def _syslog4(state, facility, priority, msg):
                 _info = usocket.getaddrinfo(_address, SYSLOG_UDP_PORT)[0][-1]
         except:
             if option & LOG_CONS:
-                print(_priorityprefixes[_EXCEPTION_PRIORITY] + "syslog: Exception in getaddrinfo(%s)" % (repr(_address),))
+                print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in getaddrinfo(%s)" % (repr(_address),))
             return
 
     if _sock is None:
@@ -208,24 +221,22 @@ def _syslog4(state, facility, priority, msg):
             _sock = usocket.socket(usocket.AF_INET, usocket.SOCK_DGRAM)
         except:
             if option & LOG_CONS:
-                print(_priorityprefixes[_EXCEPTION_PRIORITY] + "syslog: Exception in socket(AF_INET,SOCK_DGRAM)")
+                print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in socket(AF_INET,SOCK_DGRAM)")
             return
 
+    if callable(timestamp):
+        timestamp = timestamp() # function must not throw an exception
     if timestamp == '':
         timestamp = '-'
-    elif callable(timestamp):
-        t = timestamp() # function must not throw an exception
-        timestamp = '%04d-%02d-%02dT%02d:%02d:%02dZ' % (t[0], t[1], t[2], t[3], t[4], t[5])
-        del t
 
-    data = "<%d>1 %s %s %s - - - %s" % (facility|priority, timestamp, hostname, ident, msg)
+    data = "<%d>1 %s %s %s - - - %s" % (facility|severity, timestamp, hostname, ident, msg)
     data = data.encode('utf-8')
 
     try:
         _sock.sendto(data, _info)
     except:
         if option & LOG_CONS:
-            print(_priorityprefixes[_EXCEPTION_PRIORITY] + "syslog: Exception in sendto()")
+            print(_severityprefixes[_INTERNAL_EXCEPTION_SEVERITY] + "syslog: Exception in sendto()")
         # throw away the socket and get a new one next time
         try: _sock.close()
         except: pass
@@ -234,13 +245,13 @@ def _syslog4(state, facility, priority, msg):
 # FEATURE: pri is optional in CPython, but required here
 def syslog(pri, msg):
     facility = (pri & ~0x07)
-    priority = (pri &  0x07)
+    severity = (pri &  0x07)
 
     logmask = int(state['logmask'])
-    if priority & logmask:
+    if severity & logmask:
         return
 
-    _syslog4(_state, facility, priority, msg)
+    _syslog4(_state, facility, severity, msg)
 
 #### Implement (part of) the SysLogHandler API ...
 # hopefully, just enough to be useful
@@ -273,15 +284,14 @@ class Handler():
     def close(self):
         _close()
 
-    def _log(self, level, msg, *args, exc_info=False):
+    def _log(self, level, msg, *args, exc=None):
         if level > self._level:
             return
         if args:
             msg = msg % args
         _syslog4(self._state, 0, level, msg)
-#TODO: handle exc_info
-#        if exc_info:
-#            _syslog4(self._state, 0, level, ...
+        if instance(exc, BaseException):
+            _syslog4(self._state, 0, level, '%s: %s' % (exc.__class__.__name__, repr(exc.value)))
 
     def log(self, level, msg, *args):
         self._log(level, msg, *args)
@@ -305,12 +315,5 @@ class Handler():
     def debug(self, msg, *args):
         self.log(DEBUG, msg, *args)
 
-    # FEATURE: last argument is not a dict
-    def exception(self, msg, *args, exc_info=True):
-        if exc_info is True:
-            try: exc_info = sys.exc_info()
-            except: exc_info = False
-#TODO: handle being passed an exception
-#        elif isinstance(exc_info, BaseException):
-#            exc_info = (..., ..., ...)
-        self._log(_EXCEPTION_LEVEL, msg, *args, exc_info=exc_info)
+    def exception(self, msg, *args, exc=None):
+        self._log(_EXCEPTION_LEVEL, msg, *args, exc=exc)
