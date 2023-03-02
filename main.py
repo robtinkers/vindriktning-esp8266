@@ -35,7 +35,8 @@ def wlan_connect():
 
 # Start with local logging
 log = usyslog.Handler(config.syslog_address, usyslog.LOG_CONSOLE,
-                      hostname=config.machine_id, ident='vindriktning', option=usyslog.LOG_PERROR|usyslog.LOG_CONS)
+                      hostname=config.machine_id, ident='vindriktning',
+                      level=usyslog.DEBUG, option=usyslog.LOG_PERROR|usyslog.LOG_CONS)
 
 # Connect to the network
 network.WLAN(network.AP_IF).active(False)
@@ -46,7 +47,7 @@ except Exception as e:
     log.critical('Exception %s:%s while connecting to network' % (type(e).__name__, e.args))
 
 # Switch to remote logging
-log.openlog(None, None, usyslog.LOG_DAEMON)
+log.setFacility(usyslog.LOG_DAEMON)
 log.info('Started')
 
 # Set up the PM1006 sensor
@@ -198,5 +199,5 @@ while True:
         mqtt.disconnect()
 
     except Exception as e:
-        log.syslog(usyslog.LOG_ALERT, 'UNHANDLED EXCEPTION %s:%s' % (type(e).__name__, e.args))
+        log.critical('UNHANDLED EXCEPTION %s:%s' % (type(e).__name__, e.args))
 #        raise e

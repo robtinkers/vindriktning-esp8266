@@ -102,7 +102,7 @@ _severityprefixes = (
     '[debug] ',		# [7]
 )
 
-_INTERNAL_EXCEPTION_SEVERITY = const(LOG_CRIT)
+_INTERNAL_EXCEPTION_SEVERITY = const(LOG_ERR)
 
 ################
 
@@ -269,28 +269,32 @@ _EXCEPTION_LEVEL = const(ERROR)
 
 class Handler():
 
-    _level = WARNING
-
     # FEATURE: constructor doesn't take a socktype argument, and we only support UDP network traffic
     # EXTENSION: can configure more syslog values per Handler() not just the facility
     def __init__(self, address=None, facility=None, **kwargs):
         self._state = _state.copy()
-        _update_state(self._state, address=address, facility=facility)
+        _update_state(self._state, address=address, facility=facility, level=WARNING)
         _update_state(self._state, **kwargs)
 
+    # EXTENSION
+    def setFacility(self, facility):
+        if facility is not None:
+            self._state['facility'] = facility
+
     def setLevel(self, level):
-        self._level = int(level) # raises an exception if level is None
+        if level is not None:
+            self._state['level'] = level
 
     def close(self):
         _close()
 
     def _log(self, level, msg, *args, exc=None):
-        if level > self._level:
+        if level > self._state['level']:
             return
         if args:
             msg = msg % args
         _syslog4(self._state, 0, level, msg)
-        if instance(exc, BaseException):
+        if isinstance(exc, BaseException):
             _syslog4(self._state, 0, level, '%s: %s' % (exc.__class__.__name__, repr(exc.value)))
 
     def log(self, level, msg, *args):
