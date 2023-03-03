@@ -31,6 +31,39 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+
+"""
+For any other dinosaurs looking at a modern Linux system and wondering how you
+configure syslogd now, this the way in Raspbian 11...
+
+Create /etc/rsyslog.d/remotelog.conf (without the indent):
+
+    module(load="imudp")
+    input(type="imudp" port="514")
+    :fromhost-ip, startswith, "127." ~
+    *.* /var/log/remote.log
+
+Create /etc/logrotate.d/remotelog.conf (without the indent):
+
+    /var/log/remote.log
+    {
+            rotate 10
+            daily
+            missingok
+            ifempty
+            nocompress
+            nodelaycompress
+            sharedscripts
+            postrotate
+                    /usr/lib/rsyslog/rsyslog-rotate
+            endscript
+    }
+
+sudo systemctl restart rsyslog
+sudo systemctl restart logrotate
+tail -f /var/log/remote.log
+"""
+
 # heap size increased by 5520 bytes on ESP8266, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.Handler() ; gc.collect() ; gc.mem_alloc()
 
@@ -40,6 +73,7 @@ import sys, usocket
 #### syslog facility constants
 
 # pre-shifting is unconventional, but simpler to use and also how the CPython syslog wrapper does it.
+# TODO: maybe comment out some of these? is a microcontroller really ever going to do UUCP?
 LOG_KERN = const(0 << 3)
 LOG_USER = const(1 << 3)
 LOG_MAIL = const(2 << 3)
@@ -137,7 +171,7 @@ _info = None
 _sock = None
 
 # sample timestamp function. To enable: syslog.conf(timestamp=syslog.gmtimestamp)
-def gmtimestamp():
+def gmtimestamp(state): # updating state has undefined behaviour
     import time
     t = time.gmtime()
     return '%04d-%02d-%02dT%02d:%02d:%02dZ' % (t[0], t[1], t[2], t[3], t[4], t[5])
@@ -160,6 +194,8 @@ def _update_state(state, **kwargs):
 def conf(**kwargs): # currently the only way to set 'address' 'hostname' 'conmask' 'perror' 'timestamp' in the basic API
     _update_state(_state, **kwargs)
 
+# not a great API (which is why the similar one for conmask is disabled below)
+# this is here for compatibility, if you just want to set the value use conf() instead
 def setlogmask(mask):
     omask = state['logmask']
     if mask is not None and mask != 0: # as per the C API
@@ -195,15 +231,15 @@ def _log_internal_error(option, msg):
 def _syslog4(state, facility, severity, msg):
     global _info, _sock
 
-    hostname = '-' if state['hostname'] == '' else str(state['hostname'])
-    ident = '-' if state['ident'] == '' else (str(state['ident']).replace(' ','_')+':') #EXTENSION: that .replace()
     facility = int(state['facility'] if facility == 0 else facility)
     severity = int(severity)
+    timestamp = state['timestamp'] # sanity-checked later
+    hostname = state['hostname'] # sanity-checked later
+    ident = str(state['ident']).replace(' ','_') #EXTENSION: that .replace()
     option = int(state['option'])
 #    logmask = int(state['logmask']) # not used in this method, must be checked by caller
     conmask = int(state['conmask'])
     perror = state['perror']
-    timestamp = state['timestamp'] # sanity-checked later
 
     if option & LOG_PERROR:
         try:
@@ -239,16 +275,37 @@ def _syslog4(state, facility, severity, msg):
 
     if callable(timestamp):
         try:
-            timestamp = timestamp()
-            if int(timestamp[0:4]) < 2023: #TODO: keep updated! or just check <= 1970 to make sure the unix epoch isn't leaking
-                timestamp = None
+            timestamp = timestamp(state) # RFC3164 and RFC5424 have *very* different timestamp formats
         except:
 # all code has a space overhead, so we disable this as there is a clean recovery option
 #            _log_internal_error(option, 'Exception in timestamp() callback')
-            timestamp = None
-    if timestamp == '' or timestamp is None:
-        timestamp = '-'
+            timestamp = ''
 
+#    if callable(hostname):
+#        try:
+#            hostname = hostname(state) # maybe your IP changes and you want to always use the correct one?
+#        except:
+## all code has a space overhead, so we disable this as there is a clean recovery option
+##            _log_internal_error(option, 'Exception in hostname() callback')
+#            hostname = ''
+
+# RFC3164
+##    if timestamp == '':
+##        pass
+#    if hostname == '':
+#        hostname = '-'
+#    if ident != '':
+#        ident = str(ident) + ': '
+#    data = '<%d>%s %s %s%s' % (facility|severity, timestamp, hostname, ident, msg)
+#    data = data.encode()
+
+# RFC5424
+    if timestamp == '':
+        timestamp = '-'
+    if hostname == '':
+        hostname = '-'
+    if ident == '':
+        ident = '-'
     data = '<%d>1 %s %s %s - - - %s' % (facility|severity, timestamp, hostname, ident, msg)
     data = data.encode('utf-8')
 
@@ -277,10 +334,12 @@ def syslog(pri, msg):
 #### LogHandler level constants
 
 #FEATURE: these are not the LogHandler defaults, and are ordered the other way around
+EMERG = const(LOG_EMERG) #EXTENSION: not a default LogHandler level
+ALERT = const(LOG_ALERT) #EXTENSION: not a default LogHandler level
 CRITICAL = const(LOG_CRIT)
 ERROR = const(LOG_ERR)
 WARNING = const(LOG_WARNING)
-NOTICE = const(LOG_NOTICE) #EXTENSION: NOTICE isn't a default LogHandler level
+NOTICE = const(LOG_NOTICE) #EXTENSION: not a default LogHandler level
 INFO = const(LOG_INFO)
 DEBUG = const(LOG_DEBUG)
 NOTSET = const(LOG_DEBUG+1)
@@ -336,11 +395,18 @@ class Handler():
     def critical(self, msg, *args):
         self.log(CRITICAL, msg, *args)
 
+# rather than create convenience functions for alert/emerg, call .log() directly
+# why not for these, but for notice above? because in the default setup, EMERG and ALERT
+# are also printed to the console (see 'conmask'), so if you want that side-effect
+# then you'll have to forego the convenience functions. they are also outside the
+# usual range of LogHandler level values. TODO: explain this all better!
+# maybe capitalise and have .ALERT() and .EMERG() ?
+#
 #    def alert(self, msg, *args):
-#        self.log(LOG_ALERT, msg, *args)
+#        self.log(ALERT, msg, *args)
 #
 #    def emerg(self, msg, *args):
-#        self.log(LOG_EMERG, msg, *args)
+#        self.log(EMERG, msg, *args)
 
 #### could split into a seperate sub-class here
 
@@ -373,7 +439,7 @@ class Handler():
             exc = True
 
         if exc is True:
-            try: exc = sys.exc_info()[1] # I don't think this is well supported on micropython
+            try: exc = sys.exc_info()[1] # How well supported is this on micropython?
             except: exc = False
 
         self.log(_EXCEPTION_LEVEL, msg, *args)
