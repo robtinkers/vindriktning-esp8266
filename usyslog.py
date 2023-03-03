@@ -5,6 +5,7 @@ with a few handy extensions. Remember that if it's documented, it's a feature!
 The only network transport is UDP because of the lower overhead on small devices.
 
 References:
+    https://www.rfc-editor.org/rfc/rfc3164
     https://www.rfc-editor.org/rfc/rfc5424
     https://docs.python.org/3/library/syslog.html
     https://docs.python.org/3/library/logging.html
@@ -34,7 +35,7 @@ SOFTWARE.
 
 """
 For any other dinosaurs looking at a modern Linux system and wondering how you
-configure syslogd now, this the way in Raspbian 11...
+configure syslogd now, this way works in Raspbian 11...
 
 Create /etc/rsyslog.d/remotelog.conf (without the indent):
 
@@ -69,6 +70,8 @@ tail -f /var/log/remote.log
 
 from micropython import const
 import sys, usocket
+
+_RFC_ = const(5424) # const(3164) or const(5424)
 
 #### syslog facility constants
 
@@ -149,10 +152,10 @@ _INTERNAL_ERROR_SEVERITY = const(LOG_ERR)
 #    def write(cls, msg):
 #        print(msg.decode('utf-8'), end='')
 
-# this is the state shared between all (non-Handler) calls to this module
-# public methods typically bundle this with their own arguments and pass to a private method
-# each Handler object maintains its own seperate state that it passes to the same private methods
-# note that the default settings for each Handler are a copy of this state when it is instantiated
+# This is the state shared between all (non-Handler) calls to this module.
+# Public methods typically bundle this with their own arguments and pass to a private method.
+# Each Handler object maintains its own seperate state to pass to the same private methods.
+# The default settings for each Handler are a copy of this state when it is instantiated.
 _state = {
     'hostname': '-',
     'ident': '-',
@@ -170,11 +173,11 @@ _address = False # magic value, meaning no network logging
 _info = None
 _sock = None
 
-# sample timestamp function. To enable: syslog.conf(timestamp=syslog.gmtimestamp)
-def gmtimestamp(state): # updating state has undefined behaviour
-    import time
-    t = time.gmtime()
-    return '%04d-%02d-%02dT%02d:%02d:%02dZ' % (t[0], t[1], t[2], t[3], t[4], t[5])
+## sample timestamp function to use as your callback
+#def rfc5424timestamp(state): # updating 'state' has undefined behaviour
+#    import time
+#    t = time.gmtime()
+#    return '%04d-%02d-%02dT%02d:%02d:%02dZ' % (t[0], t[1], t[2], t[3], t[4], t[5])
 
 # note that if any value is None, then the associated state key will not be updated
 # this allows us to pass in a method's named arguments with minimal processing
@@ -190,7 +193,7 @@ def _update_state(state, **kwargs):
         else:
             state[k] = kwargs[k]
 
-#EXTENSION: syslog.conf()
+#EXTENSION: how can you not have something called syslog.conf ?
 def conf(**kwargs): # currently the only way to set 'address' 'hostname' 'conmask' 'perror' 'timestamp' in the basic API
     _update_state(_state, **kwargs)
 
@@ -202,7 +205,7 @@ def setlogmask(mask):
         _state['logmask'] = mask
     return omask
 
-#EXTENSION:
+#EXTENSION: is it actually an extension if it's disabled?
 #def setconmask(mask):
 #    omask = state['conmask']
 #    if mask is not None and mask != 0: # copy setlogmask()'s API
@@ -273,41 +276,51 @@ def _syslog4(state, facility, severity, msg):
             _log_internal_error(option, 'Exception in socket(AF_INET,SOCK_DGRAM)')
             return
 
-    if callable(timestamp):
-        try:
-            timestamp = timestamp(state) # RFC3164 and RFC5424 have *very* different timestamp formats
-        except:
-# all code has a space overhead, so we disable this as there is a clean recovery option
-#            _log_internal_error(option, 'Exception in timestamp() callback')
-            timestamp = ''
 
+## "You think you do but you don't"
 #    if callable(hostname):
 #        try:
-#            hostname = hostname(state) # maybe your IP changes and you want to always use the correct one?
+#            hostname = hostname(state)
 #        except:
-## all code has a space overhead, so we disable this as there is a clean recovery option
-##            _log_internal_error(option, 'Exception in hostname() callback')
+#            _log_internal_error(option, 'Exception in hostname() callback')
 #            hostname = ''
 
-# RFC3164
-##    if timestamp == '':
-##        pass
-#    if hostname == '':
-#        hostname = '-'
-#    if ident != '':
-#        ident = str(ident) + ': '
-#    data = '<%d>%s %s %s%s' % (facility|severity, timestamp, hostname, ident, msg)
-#    data = data.encode()
-
-# RFC5424
-    if timestamp == '':
-        timestamp = '-'
-    if hostname == '':
-        hostname = '-'
-    if ident == '':
-        ident = '-'
-    data = '<%d>1 %s %s %s - - - %s' % (facility|severity, timestamp, hostname, ident, msg)
-    data = data.encode('utf-8')
+    # In theory, most of this code section will be optimised away. TODO: check this!
+    if False:
+        pass
+    elif _RFC_ == 3164: # RFC3164
+        if callable(timestamp):
+            try:
+                timestamp = str(timestamp(state)) # RC3164 timestamps aren't trivial to sanity-check
+            except:
+#                _log_internal_error(option, 'Exception in timestamp() callback')
+                timestamp = ''
+        if hostname == '':
+            hostname = '-'
+        if ident != '':
+            ident = str(ident) + ': '
+        data = '<%d>%s %s %s%s' % (facility|severity, timestamp, hostname, ident, msg)
+        data = data.encode()
+    elif _RFC_ == 5424: # RFC5424
+        if callable(timestamp):
+            try:
+                timestamp = str(timestamp(state))
+                if int(timestamp[:4]) < 2023: # simple sanity-check; or just check <= 1970 to make sure unix epoch isn't leaking
+                    timestamp = ''
+            except:
+#                _log_internal_error(option, 'Exception in timestamp() callback')
+                timestamp = ''
+        if timestamp == '':
+            timestamp = '-'
+        if hostname == '':
+            hostname = '-'
+        if ident == '':
+            ident = '-'
+        data = '<%d>1 %s %s %s - - - %s' % (facility|severity, timestamp, hostname, ident, msg)
+        data = data.encode('utf-8')
+    else:
+#        _log_internal_error(option, '_RFC_ is invalid (%d)', _RFC_)
+        pass # 'data' is undefined and will throw an exception in the next line
 
     try:
         _sock.sendto(data, _info)
