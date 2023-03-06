@@ -65,8 +65,9 @@ sudo systemctl restart logrotate
 tail -f /var/log/remote.log
 """
 
-# heap size increased by 5520 bytes on ESP8266, as reported by
+# heap size increased by ~6KB on ESP8266, as reported by
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.Handler() ; gc.collect() ; gc.mem_alloc()
+# import gc,micropython ; gc.collect() ; micropython.mem_info() ; import usyslog ; z=usyslog.Handler() ; gc.collect() ; micropython.mem_info()
 
 from micropython import const
 import usocket # essential
@@ -221,9 +222,9 @@ def closelog():
     openlog(ident='-', option=0, facility=LOG_USER)
     #TODO: what about logmask (and conmask)? perror?
 
-def _log_internal_error(option, msg):
+def _internal_exception_log(option, e, msg):
     if option & LOG_CONS:
-        print(_severityprefixes[_INTERNAL_ERROR_SEVERITY] + 'syslog: ' + msg)
+        print(_severityprefixes[_INTERNAL_ERROR_SEVERITY] + 'syslog: ' + _EXCEPTION_FORMAT % (e.__class__.__name__, repr(e.value)), msg)
 
 def _syslog4(state, facility, severity, msg):
     global _info, _sock
@@ -241,8 +242,8 @@ def _syslog4(state, facility, severity, msg):
     if option & LOG_PERROR:
         try:
             perror.write((_severityprefixes[severity] + msg + '\n').encode('utf-8'))
-        except:
-            _log_internal_error(option, 'Exception in perror.write() callback')
+        except Exception as e:
+            _internal_exception_log(option, e, ' in perror.write() callback')
             pass
 
     #EXTENSION: automatically send LOG_CONSOLE and some severities to console
@@ -259,23 +260,23 @@ def _syslog4(state, facility, severity, msg):
                 _info = usocket.getaddrinfo(_address[0], _address[1])[0][-1]
             else:
                 _info = usocket.getaddrinfo(_address, SYSLOG_UDP_PORT)[0][-1]
-        except:
-            _log_internal_error(option, 'Exception in getaddrinfo()')
+        except Exception as e:
+            _internal_exception_log(option, e, ' in getaddrinfo()')
             return
 
     if _sock is None:
         try:
             _sock = usocket.socket(usocket.AF_INET, usocket.SOCK_DGRAM)
-        except:
-            _log_internal_error(option, 'Exception in socket(AF_INET,SOCK_DGRAM)')
+        except Exception as e:
+            _internal_exception_log(option, e, ' in socket(AF_INET,SOCK_DGRAM)')
             return
 
 ## "You think you do but you don't"
 #    if callable(hostname):
 #        try:
 #            hostname = hostname(state)
-#        except:
-#            _log_internal_error(option, 'Exception in hostname() callback')
+#        except Exception as e:
+#            _internal_exception_log(option, e, ' in hostname() callback')
 #            hostname = ''
 
     # In theory, most of this code section will be optimised away. TODO: check this!
@@ -285,8 +286,8 @@ def _syslog4(state, facility, severity, msg):
 #        if callable(timestamp):
 #            try:
 #                timestamp = str(timestamp(state)) # RC3164 timestamps aren't trivial to sanity-check
-#            except:
-##                _log_internal_error(option, 'Exception in timestamp() callback')
+#            except Exception as e:
+##                _internal_exception_log(option, e, ' in timestamp() callback')
 #                timestamp = ''
 #        if hostname == '':
 #            hostname = '-'
@@ -300,8 +301,8 @@ def _syslog4(state, facility, severity, msg):
                 timestamp = str(timestamp(state))
                 if int(timestamp[:4]) < 2023: # simple sanity-check; or just check <= 1970 to make sure unix epoch isn't leaking
                     timestamp = ''
-            except:
-#                _log_internal_error(option, 'Exception in timestamp() callback')
+            except Exception as e:
+#                _internal_exception_log(option, e, ' in timestamp() callback')
                 timestamp = ''
         if timestamp == '':
             timestamp = '-'
@@ -312,13 +313,12 @@ def _syslog4(state, facility, severity, msg):
         data = '<%d>1 %s %s %s - - - %s' % (facility|severity, timestamp, hostname, ident, msg)
         data = data.encode('utf-8')
     else:
-#        _log_internal_error(option, 'RFC is invalid (%d)', RFC)
         pass # 'data' is undefined and will throw an exception in the next line
 
     try:
         _sock.sendto(data, _info)
-    except:
-        _log_internal_error(option, 'Exception in sendto()')
+    except Exception as e:
+        _internal_exception_log(option, e, ' in sendto()')
         # throw away the socket and get a new one next time
         try: _sock.close()
         except: pass
