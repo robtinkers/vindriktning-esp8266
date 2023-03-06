@@ -69,9 +69,10 @@ tail -f /var/log/remote.log
 # import gc ; gc.collect() ; gc.mem_alloc() ; import usyslog ; z=usyslog.Handler() ; gc.collect() ; gc.mem_alloc()
 
 from micropython import const
-import sys, usocket
+import usocket # essential
+import sys # if you *really* don't want to import sys, only minor code changes are needed
 
-_RFC_ = const(5424) # const(3164) or const(5424)
+RFC = const(5424) # const(3164) or const(5424), might need to enable the code section in _syslog4() below
 
 #### syslog facility constants
 
@@ -144,13 +145,6 @@ _severityprefixes = (
 _INTERNAL_ERROR_SEVERITY = const(LOG_ERR)
 
 ######## Implement (most of) the syslog wrapper API ...
-
-# if you really don't want to import sys just for sys.stderr
-# then you could use this class and set 'perror': _stdout
-#class _stdout(object):
-#    @classmethod
-#    def write(cls, msg):
-#        print(msg.decode('utf-8'), end='')
 
 # This is the state shared between all (non-Handler) calls to this module.
 # Public methods typically bundle this with their own arguments and pass to a private method.
@@ -276,7 +270,6 @@ def _syslog4(state, facility, severity, msg):
             _log_internal_error(option, 'Exception in socket(AF_INET,SOCK_DGRAM)')
             return
 
-
 ## "You think you do but you don't"
 #    if callable(hostname):
 #        try:
@@ -288,20 +281,20 @@ def _syslog4(state, facility, severity, msg):
     # In theory, most of this code section will be optimised away. TODO: check this!
     if False:
         pass
-    elif _RFC_ == 3164: # RFC3164
-        if callable(timestamp):
-            try:
-                timestamp = str(timestamp(state)) # RC3164 timestamps aren't trivial to sanity-check
-            except:
-#                _log_internal_error(option, 'Exception in timestamp() callback')
-                timestamp = ''
-        if hostname == '':
-            hostname = '-'
-        if ident != '':
-            ident = str(ident) + ': '
-        data = '<%d>%s %s %s%s' % (facility|severity, timestamp, hostname, ident, msg)
-        data = data.encode()
-    elif _RFC_ == 5424: # RFC5424
+#    elif RFC == 3164: # RFC3164
+#        if callable(timestamp):
+#            try:
+#                timestamp = str(timestamp(state)) # RC3164 timestamps aren't trivial to sanity-check
+#            except:
+##                _log_internal_error(option, 'Exception in timestamp() callback')
+#                timestamp = ''
+#        if hostname == '':
+#            hostname = '-'
+#        if ident != '':
+#            ident = str(ident) + ': '
+#        data = '<%d>%s %s %s%s' % (facility|severity, timestamp, hostname, ident, msg)
+#        data = data.encode()
+    elif RFC == 5424: # RFC5424
         if callable(timestamp):
             try:
                 timestamp = str(timestamp(state))
@@ -319,7 +312,7 @@ def _syslog4(state, facility, severity, msg):
         data = '<%d>1 %s %s %s - - - %s' % (facility|severity, timestamp, hostname, ident, msg)
         data = data.encode('utf-8')
     else:
-#        _log_internal_error(option, '_RFC_ is invalid (%d)', _RFC_)
+#        _log_internal_error(option, 'RFC is invalid (%d)', RFC)
         pass # 'data' is undefined and will throw an exception in the next line
 
     try:
@@ -458,4 +451,3 @@ class Handler():
         self.log(_EXCEPTION_LEVEL, msg, *args)
         if exc is not False:
             self.log(_EXCEPTION_LEVEL, _EXCEPTION_FORMAT, exc.__class__.__name__, repr(exc.value))
-
